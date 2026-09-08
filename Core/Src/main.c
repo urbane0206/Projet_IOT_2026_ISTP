@@ -42,6 +42,12 @@
 /* USER CODE BEGIN PD */
 #define VREF_MV   3300.0f
 #define ADC_MAX   4095.0f
+
+/* ---------- DFR0026 (PT550), émetteur suiveur : Vout = Iph * 470 ---------- */
+#define DFR0026_R_LOAD_OHM   470.0f
+#define PT550_UA_PER_LUX     0.9f       /* à recaler avec un luxmètre */
+#define DFR0026_MV_PER_LUX   (DFR0026_R_LOAD_OHM * PT550_UA_PER_LUX / 1000.0f)   /* 0.423 mV/lux */
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -98,6 +104,32 @@ float lm94021_adc_to_tempC(u2_t adc) {
     return x + 30.0f;                    // T = x + 30
 }
 
+uint16_t dfr0026_adc_to_lux(u2_t adc) {
+    float v_mv = (float)adc * VREF_MV / ADC_MAX;
+    float lux  = v_mv / DFR0026_MV_PER_LUX;
+    if (lux > 65535.0f) lux = 65535.0f;
+    return (uint16_t)(lux + 0.5f);
+}
+
+/* ---------- ADC : lecture d'un canal ---------- */
+static u2_t adc_read_channel(uint32_t channel) {
+	ADC_ChannelConfTypeDef sConfig = {0};
+	sConfig.Channel      = channel;
+	sConfig.Rank         = ADC_REGULAR_RANK_1;
+	sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
+	sConfig.SingleDiff   = ADC_SINGLE_ENDED;
+	sConfig.OffsetNumber = ADC_OFFSET_NONE;
+	sConfig.Offset       = 0;
+	HAL_ADC_ConfigChannel(&hadc1, &sConfig);
+
+	u2_t val = 0;
+	HAL_ADC_Start(&hadc1);
+	if (HAL_ADC_PollForConversion(&hadc1, 5) == HAL_OK)
+		val = (u2_t) HAL_ADC_GetValue(&hadc1);
+	HAL_ADC_Stop(&hadc1);
+	return val;
+}
+
 static void blinkfunc(osjob_t *j) {
 // toggle LED
 	ledstate = !ledstate;
@@ -129,34 +161,46 @@ void initfunc(osjob_t *j) {
 	LMIC_reset();
 	// start joining
 	LMIC_startJoining();
-	// init done - onEvent() callback will be invoked...
+
+	LMIC_setupBand(BAND_MILLI, 14, 100);
+
+	//LMIC_setDrTxpow(DR_SF9, 14);
 }
-u2_t readsensor() {
+u2_t readsensor_temp() {
 	HAL_GPIO_WritePin(ALIM_TEMP_GPIO_Port, ALIM_TEMP_Pin, 1);
-	HAL_Delay(10);	//necess
-	HAL_ADC_Start(&hadc1);
-	if (HAL_ADC_PollForConversion(&hadc1, 5) == HAL_OK) {
-		uint16_t temp_val = HAL_ADC_GetValue(&hadc1);
-		HAL_GPIO_WritePin(ALIM_TEMP_GPIO_Port, ALIM_TEMP_Pin, 0);
-		return (u2_t) temp_val;
-	}
+	HAL_Delay(10);
+	u2_t temp_val = adc_read_channel(ADC_CHANNEL_15);
 	HAL_GPIO_WritePin(ALIM_TEMP_GPIO_Port, ALIM_TEMP_Pin, 0);
-	return 0;
+	return temp_val;
 }
+
+u2_t readsensor_lux() {
+	u2_t lux_val = adc_read_channel(ADC_CHANNEL_7);
+	return lux_val;
+}
+
 
 static osjob_t reportjob;
 // report sensor value every minute
 static void reportfunc(osjob_t *j) {
-	// read sensor
-	u2_t val = readsensor();
-	float sensor_temp = lm94021_adc_to_tempC(val);
+	// read sensor temp
+	u2_t temp_val = readsensor_temp();
+	float sensor_temp = lm94021_adc_to_tempC(temp_val);
 	debug_time();
 	debug_valfloat("Onboard sensor temp -> ", sensor_temp, 4);
 	debug_str(" °C\r\n");
 
+	// read sensor lux
+	u2_t lux_val = readsensor_lux();
+	uint16_t sensor_lux = dfr0026_adc_to_lux(lux_val);
+	debug_time();
+	debug_valdec("Onboard sensor lux -> ", sensor_lux);
+	debug_str(" lux \r\n");
+
 	// encodage Cayenne LPP
 	cayenne_lpp_reset(&lpp);
 	cayenne_lpp_add_temperature(&lpp, 1, sensor_temp);        // canal 1 : 0.1 °C, 4 octets
+	cayenne_lpp_add_luminosity(&lpp, 2, sensor_lux);
 	// prepare and schedule data for transmission
 	LMIC_setTxData2(1, lpp.buffer, lpp.cursor, 0);            // port 1, 8 octets, unconfirmed
 

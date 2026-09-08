@@ -57,6 +57,8 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define LUX_Pin GPIO_PIN_2
+#define LUX_GPIO_Port GPIOA
 #define ALIM_TEMP_Pin GPIO_PIN_7
 #define ALIM_TEMP_GPIO_Port GPIOA
 #define TEMP_Pin GPIO_PIN_0

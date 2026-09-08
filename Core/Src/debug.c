@@ -61,6 +61,14 @@ void debug_char (char c) {
   HAL_UART_Transmit(&myUART,buffer,sizeof(buffer),HAL_MAX_DELAY);
 }
 
+void debug_valfreq (const char* label, u4_t hz) {
+    debug_str(label);
+    debug_int(hz / 1000000);           // 868
+    debug_char('.');
+    debug_int((hz / 100000) % 10);     // 1
+    debug_str(" MHz\r\n");
+}
+
 void debug_hex (u1_t b) {
     debug_char("0123456789ABCDEF"[b>>4]);
     debug_char("0123456789ABCDEF"[b&0xF]);
@@ -111,15 +119,15 @@ void debug_valfloat (const char* label, double val, int n) {
 void debug_val (const char* label, u4_t val) {
     debug_str(label);
     debug_uint(val);
-    debug_char('\r');
-    debug_char('\n');
+    //debug_char('\r');
+    //debug_char('\n');
 }
 
 void debug_valdec (const char* label, s4_t val) {
     debug_str(label);
     debug_int(val);
-    debug_char('\r');
-    debug_char('\n');
+    //debug_char('\r');
+    //debug_char('\n');
 }
 
 int debug_fmt (char* buf, int max, s4_t val, int base, int width, char pad) {
@@ -175,10 +183,16 @@ void debug_event (int ev) {
         [EV_LINK_DEAD]      = "LINK_DEAD",
         [EV_LINK_ALIVE]     = "LINK_ALIVE",
         [EV_SCAN_FOUND]     = "SCAN_FOUND",
-        [EV_TXSTART]        = "EV_TXSTART",
+        [EV_TXSTART]        = "TXSTART",
     };
     debug_time();
-    debug_str((ev < sizeof(evnames)/sizeof(evnames[0])) ? evnames[ev] : "EV_UNKNOWN" );
-    debug_char('\r');
-    debug_char('\n');
+    debug_str((ev < sizeof(evnames)/sizeof(evnames[0])) ? evnames[ev] : "EV_UNKNOWN");
+    if (ev == EV_TXSTART) {
+        debug_valdec(" -> SF", 12 - LMIC.datarate); //print Spreading Factor
+        debug_valfreq(" / ", LMIC.freq);            //print freq du canal
+    } else {
+        debug_char('\r');
+        debug_char('\n');
+    }
+
 }
