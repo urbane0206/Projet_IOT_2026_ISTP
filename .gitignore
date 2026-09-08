@@ -1,0 +1,25 @@
+# Dossiers de compilation (binaires, objets, maps)
+Debug/
+Release/
+bin/
+obj/
+
+# Fichiers générés par le compilateur et le linker
+*.o
+*.d
+*.su
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+
+# Fichiers temporaires ou locaux de STM32CubeIDE / Eclipse
+.settings/language.settings.xml
+*.launch
+*.bak
+*~
+
+# Fichiers systèmes OS
+.DS_Store
+Thumbs.db
