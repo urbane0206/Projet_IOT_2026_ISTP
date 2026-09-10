@@ -45,8 +45,8 @@
 
 /* ---------- DFR0026 (PT550), émetteur suiveur : Vout = Iph * 470 ---------- */
 #define DFR0026_R_LOAD_OHM   470.0f
-#define PT550_UA_PER_LUX     0.9f       /* à recaler avec un luxmètre */
-#define DFR0026_MV_PER_LUX   (DFR0026_R_LOAD_OHM * PT550_UA_PER_LUX / 1000.0f)   /* 0.423 mV/lux */
+#define PT550_UA_PER_LUX     0.40f       /* à recaler avec un luxmètre */
+#define DFR0026_MV_PER_LUX   (DFR0026_R_LOAD_OHM * PT550_UA_PER_LUX / 1000.0f)
 
 /* USER CODE END PD */
 
@@ -199,8 +199,8 @@ static void reportfunc(osjob_t *j) {
 
 	// encodage Cayenne LPP
 	cayenne_lpp_reset(&lpp);
-	cayenne_lpp_add_temperature(&lpp, 1, sensor_temp);        // canal 1 : 0.1 °C, 4 octets
-	cayenne_lpp_add_luminosity(&lpp, 2, sensor_lux);
+	cayenne_lpp_add_temperature(&lpp, 1, sensor_temp);        // canal 1 : 0.1 °C
+	cayenne_lpp_add_luminosity(&lpp, 2, sensor_lux);		  // canal 2 : lux
 	// prepare and schedule data for transmission
 	LMIC_setTxData2(1, lpp.buffer, lpp.cursor, 0);            // port 1, 8 octets, unconfirmed
 
