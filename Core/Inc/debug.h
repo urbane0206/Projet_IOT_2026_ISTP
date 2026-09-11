@@ -29,6 +29,10 @@
 // intialize debug library
 void debug_init (void);
 
+void debug_header_trame (u4_t num);
+
+void debug_banner_lorawan (void);
+
 // set LED state
 void debug_led (int val);
 

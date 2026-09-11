@@ -36,6 +36,8 @@
 
 #define myUART huart1   //  <--------- change to your setup
 
+static u4_t compteur_trames = 1;
+
 /*  ************************************** */
 /*    DO NOT CHANGE BELOW THIS LINE        */
 /*  ************************************** */
@@ -47,8 +49,20 @@ void debug_init () {
     // configure USART1 (115200/8N1, tx-only)
 
     // print banner
-	debug_str("\r\n=================== BOOT ==================\r\n");
-    debug_str("\r\n============== DEBUG STARTED ==============\r\n");
+	debug_banner_lorawan();
+
+}
+
+void debug_banner_lorawan (void) {
+    debug_str("\r\n");
+    debug_str("  _        ___   ____     _     __        __     _     _   _ \r\n");
+    debug_str(" | |      / _ \\ |  _ \\   / \\    \\ \\      / /    / \\   | \\ | |\r\n");
+    debug_str(" | |     | | | || |_) | / _ \\    \\ \\ /\\ / /    / _ \\  |  \\| |\r\n");
+    debug_str(" | |___  | |_| ||  _ < / ___ \\    \\ V  V /    / ___ \\ | |\\  |\r\n");
+    debug_str(" |_____|  \\___/ |_| \\_\\_/   \\_\\    \\_/\\_/    /_/   \\_\\|_| \\_|\r\n");
+    debug_str(" ==============================================================\r\n");
+    debug_str("               STM32 + LMIC OS - NODE READY                    \r\n");
+    debug_str(" ==============================================================\r\n\r\n");
 }
 
 void debug_led (int val) {
@@ -67,6 +81,18 @@ void debug_valfreq (const char* label, u4_t hz) {
     debug_char('.');
     debug_int((hz / 100000) % 10);     // 1
     debug_str(" MHz\r\n");
+}
+
+void debug_banner_joined (void) {
+    debug_str("\r\n+-----------------------------------------------+\r\n");
+    debug_str("|           LORAWAN NETWORK JOINED SUCCESS      |\r\n");
+    debug_str("+-----------------------------------------------+\r\n\r\n");
+}
+
+void debug_header_trame (u4_t num) {
+    debug_str("============= UPLINK -> ");
+    debug_int(num);
+    debug_str(" =============\r\n");
 }
 
 void debug_hex (u1_t b) {
@@ -185,12 +211,18 @@ void debug_event (int ev) {
         [EV_SCAN_FOUND]     = "SCAN_FOUND",
         [EV_TXSTART]        = "TXSTART",
     };
-    debug_time();
-    debug_str((ev < sizeof(evnames)/sizeof(evnames[0])) ? evnames[ev] : "EV_UNKNOWN");
+    if (ev == EV_JOINED) {
+        debug_banner_joined();
+    }
     if (ev == EV_TXSTART) {
+    	debug_header_trame(compteur_trames++);
+    	debug_time();
+    	debug_str((ev < sizeof(evnames)/sizeof(evnames[0])) ? evnames[ev] : "EV_UNKNOWN");
         debug_valdec(" -> SF", 12 - LMIC.datarate); //print Spreading Factor
         debug_valfreq(" / ", LMIC.freq);            //print freq du canal
     } else {
+    	debug_time();
+    	debug_str((ev < sizeof(evnames)/sizeof(evnames[0])) ? evnames[ev] : "EV_UNKNOWN");
         debug_char('\r');
         debug_char('\n');
     }

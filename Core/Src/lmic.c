@@ -49,7 +49,7 @@
 #define BCN_WINDOW_osticks     ms2osticks(BCN_WINDOW_ms)
 #define AIRTIME_BCN_osticks    us2osticks(AIRTIME_BCN)
 #if defined(CFG_eu868)
-#define DNW2_SAFETY_ZONE       ms2osticks(3000)
+#define DNW2_SAFETY_ZONE       ms2osticks(300)
 #endif
 #if defined(CFG_us915)
 #define DNW2_SAFETY_ZONE       ms2osticks(750)
@@ -546,9 +546,9 @@ void LMIC_setPingable (u1_t intvExp) {
 enum { NUM_DEFAULT_CHANNELS=6 };
 static const u4_t iniChannelFreq[12] = {
     // Join frequencies and duty cycle limit (0.1%)
-    EU868_F1|BAND_MILLI, EU868_J4|BAND_MILLI,
-    EU868_F2|BAND_MILLI, EU868_J5|BAND_MILLI,
-    EU868_F3|BAND_MILLI, EU868_J6|BAND_MILLI,
+    EU868_F1|BAND_MILLI, EU868_F1|BAND_MILLI,
+    EU868_F2|BAND_MILLI, EU868_F2|BAND_MILLI,
+    EU868_F3|BAND_MILLI, EU868_F3|BAND_MILLI,
     // Default operational frequencies
     EU868_F1|BAND_CENTI, EU868_F2|BAND_CENTI, EU868_F3|BAND_CENTI,
     EU868_F4|BAND_MILLI, EU868_F5|BAND_MILLI, EU868_F6|BAND_DECI
@@ -571,11 +571,11 @@ static void initDefaultChannels (bit_t join) {
 //        LMIC.channelDrMap[1] = DR_RANGE_MAP(DR_SF12,DR_FSK);
 //    }
 
-    LMIC.bands[BAND_MILLI].txcap    = 1000;  // 0.1%
-    LMIC.bands[BAND_MILLI].txpow    = 14;
+    LMIC.bands[BAND_MILLI].txcap    = 100;  // 1%
+    LMIC.bands[BAND_MILLI].txpow    = 20;
     LMIC.bands[BAND_MILLI].lastchnl = os_getRndU1() % MAX_CHANNELS;
     LMIC.bands[BAND_CENTI].txcap    = 100;   // 1%
-    LMIC.bands[BAND_CENTI].txpow    = 14;
+    LMIC.bands[BAND_CENTI].txpow    = 20;
     LMIC.bands[BAND_CENTI].lastchnl = os_getRndU1() % MAX_CHANNELS;
     LMIC.bands[BAND_DECI ].txcap    = 10;    // 10%
     LMIC.bands[BAND_DECI ].txpow    = 27;
@@ -703,7 +703,7 @@ static void initJoinLoop (void) {
     setDrJoin(DRCHG_SET, DR_SF7);
     initDefaultChannels(1);
     ASSERT((LMIC.opmode & OP_NEXTCHNL)==0);
-    LMIC.txend = LMIC.bands[BAND_MILLI].avail + rndDelay(8);
+    LMIC.txend = LMIC.bands[BAND_MILLI].avail;// + rndDelay(8);
 }
 
 
@@ -734,7 +734,7 @@ static ostime_t nextJoinState (void) {
          ? DNW2_SAFETY_ZONE
          // Otherwise: randomize join (street lamp case):
          // SF12:255, SF11:127, .., SF7:8secs
-         : DNW2_SAFETY_ZONE+rndDelay(255>>LMIC.datarate));
+         : DNW2_SAFETY_ZONE);//+rndDelay(255>>LMIC.datarate));
     // 1 - triggers EV_JOIN_FAILED event
     return failed;
 }
@@ -882,13 +882,13 @@ static ostime_t nextJoinState (void) {
         setDrJoin(DRCHG_SET, dr);
     }
     LMIC.opmode &= ~OP_NEXTCHNL;
-    LMIC.txend = os_getTime() +
-        (isTESTMODE()
+    LMIC.txend = os_getTime() + DNW2_SAFETY_ZONE;
+        //(isTESTMODE()
          // Avoid collision with JOIN ACCEPT being sent by GW (but we missed it - GW is still busy)
-         ? DNW2_SAFETY_ZONE
+         //? DNW2_SAFETY_ZONE
          // Otherwise: randomize join (street lamp case):
          // SF10:16, SF9=8,..SF8C:1secs
-         : rndDelay(16>>LMIC.datarate));
+         //: rndDelay(16>>LMIC.datarate));
     // 1 - triggers EV_JOIN_FAILED event
     return failed;
 }
@@ -1479,7 +1479,7 @@ static void processRx2DnData (xref2osjob_t osjob) {
         // Delay callback processing to avoid up TX while gateway is txing our missed frame! 
         // Since DNW2 uses SF12 by default we wait 3 secs.
         os_setTimedCallback(&LMIC.osjob,
-                            (os_getTime() + DNW2_SAFETY_ZONE + rndDelay(2)),
+                            (os_getTime() + DNW2_SAFETY_ZONE + rndDelay(0)),
                             FUNC_ADDR(processRx2DnDataDelay));
         return;
     }

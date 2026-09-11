@@ -45,7 +45,7 @@
 
 /* ---------- DFR0026 (PT550), émetteur suiveur : Vout = Iph * 470 ---------- */
 #define DFR0026_R_LOAD_OHM   470.0f
-#define PT550_UA_PER_LUX     0.40f       /* à recaler avec un luxmètre */
+#define PT550_UA_PER_LUX     0.90f       /* à recaler avec un luxmètre */
 #define DFR0026_MV_PER_LUX   (DFR0026_R_LOAD_OHM * PT550_UA_PER_LUX / 1000.0f)
 
 /* USER CODE END PD */
@@ -162,8 +162,6 @@ void initfunc(osjob_t *j) {
 	// start joining
 	LMIC_startJoining();
 
-	LMIC_setupBand(BAND_MILLI, 14, 100);
-
 	//LMIC_setDrTxpow(DR_SF9, 14);
 }
 u2_t readsensor_temp() {
@@ -205,7 +203,7 @@ static void reportfunc(osjob_t *j) {
 	LMIC_setTxData2(1, lpp.buffer, lpp.cursor, 0);            // port 1, 8 octets, unconfirmed
 
 	// reschedule job in 15 seconds
-	os_setTimedCallback(j, os_getTime() + sec2osticks(15), reportfunc);
+	//os_setTimedCallback(j, os_getTime() + sec2osticks(15), reportfunc);
 }
 
 //////////////////////////////////////////////////
@@ -221,14 +219,23 @@ void onEvent(ev_t ev) {
 		// kick-off periodic sensor job
 		os_clearCallback(&blinkjob);
 		debug_led(1);
+		LMIC_setAdrMode(0);
+		LMIC_setLinkCheckMode(0);
+		LMIC_setDrTxpow(DR_SF7, 20);
 		reportfunc(&reportjob);
 		break;
 	case EV_TXCOMPLETE:
 		if (LMIC.txrxFlags & TXRX_ACK)
 			debug_str("  -> received ack\r\n");
 		if (LMIC.dataLen) {
-			debug_val("  -> payload bytes = ", LMIC.dataLen);
+			debug_time();
+		    debug_val("Payload RX ->  ", LMIC.dataLen); //nombre de bits reçu
+		    debug_val(", Port : ", LMIC.frame[LMIC.dataBeg - 1]);
+		    debug_str(", Data : ");
+		    debug_buf(LMIC.frame + LMIC.dataBeg, LMIC.dataLen);
+		    debug_char('\n');
 		}
+		os_setTimedCallback(&reportjob, os_getTime() + ms2osticks(200), reportfunc); //200ms callback du job
 		break;
 	case EV_JOIN_FAILED:
 	case EV_SCAN_TIMEOUT:

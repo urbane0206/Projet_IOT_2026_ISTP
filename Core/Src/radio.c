@@ -423,14 +423,21 @@ static void configPower () {
 #ifdef CFG_sx1276_radio
     // no boost used for now
     s1_t pw = (s1_t)LMIC.txpow;
-    if(pw >= 17) {
-        pw = 15;
+    if(pw > 20) {
+        pw = 20;
     } else if(pw < 2) {
         pw = 2;
     }
-    // check board type for BOOST pin
-    writeReg(RegPaConfig, (u1_t)(0x80|(pw&0xf)));
-    writeReg(RegPaDac, readReg(RegPaDac)|0x4);
+    if (pw > 17) {
+        // 20 dBm : PA_DAC en mode boost, OutputPower = 15
+        writeReg(RegPaDac, (readReg(RegPaDac) & 0xF8) | 0x07);
+        writeReg(RegPaConfig, 0x80 | 0x70 | 0x0F);
+        writeReg(RegOcp, 0x20 | 0x0B);               // OCP ~100 mA
+    } else {
+        // 2..17 dBm : Pout = 17 - (15 - OutputPower)  →  OutputPower = pw - 2
+        writeReg(RegPaDac, (readReg(RegPaDac) & 0xF8) | 0x04);
+        writeReg(RegPaConfig, 0x80 | 0x70 | ((pw - 2) & 0x0F));
+    }
 
 #elif CFG_sx1272_radio
     // set PA config (2-17 dBm using PA_BOOST)
