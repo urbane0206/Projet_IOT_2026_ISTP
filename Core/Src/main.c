@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
+#include "i2c.h"
 #include "spi.h"
 #include "tim.h"
 #include "usart.h"
@@ -31,6 +32,8 @@
 #include "debug.h"
 #include "math.h"
 #include "cayenne_lpp.h"
+#include "RGBLCD1602.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -77,6 +80,8 @@ static u1_t ledstate = 0;
 
 static cayenne_lpp_t lpp;   // statique : buffer de 51 octets, pas sur la pile
 
+RGBLCD1602_t Ecran_I2C; //creation de l'objet
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -102,6 +107,11 @@ float lm94021_adc_to_tempC(u2_t adc) {
     float x = (-b + sqrtf(disc)) / (2.0f * a);
 
     return x + 30.0f;                    // T = x + 30
+}
+
+float LM35_GetTemperature(u2_t adc)
+{
+    return (330.0f * adc) / 4095.0f;
 }
 
 uint16_t dfr0026_adc_to_lux(u2_t adc) {
@@ -138,6 +148,37 @@ static void blinkfunc(osjob_t *j) {
 	os_setTimedCallback(j, os_getTime() + ms2osticks(100), blinkfunc);
 }
 
+void RGBLCD1602_ECRAN_I2C_Init(RGBLCD1602_t *lcd, I2C_HandleTypeDef *hi2c, u1_t red, u1_t green, u1_t blue)
+{
+	DFRobot_RGBLCD1602(lcd, hi2c, LCD_ADDRESS, RGBAddr, 16, 2);
+
+	DFRobot_RGBLCD1602_init(lcd);
+
+	HAL_Delay(10);
+	DFRobot_RGBLCD1602_clear(lcd);
+
+	DFRobot_RGBLCD1602_setRGB(lcd, red, green, blue);
+	/*
+	DFRobot_RGBLCD1602_setCursor(lcd, 0, 0);
+	DFRobot_RGBLCD1602_print(lcd, "Nucleo L476RG");
+
+	DFRobot_RGBLCD1602_setCursor(lcd, 0, 1);
+	DFRobot_RGBLCD1602_print(lcd, "LCD 1602 RGB");
+	*/
+	HAL_Delay(10);
+}
+
+void RGBLCD1602_ECRAN_start_com(RGBLCD1602_t *lcd)
+{
+	DFRobot_RGBLCD1602_clear(lcd);
+
+	DFRobot_RGBLCD1602_setCursor(lcd, 0, 0);
+	DFRobot_RGBLCD1602_print(lcd, "  Lancement Com ");
+
+	DFRobot_RGBLCD1602_setCursor(lcd, 0, 1);
+	DFRobot_RGBLCD1602_print(lcd, "Attente downlink");
+}
+
 // provide application router ID (8 bytes, LSBF)
 void os_getArtEui(u1_t *buf) {
 	memcpy(buf, APPEUI, 8);
@@ -165,15 +206,15 @@ void initfunc(osjob_t *j) {
 	//LMIC_setDrTxpow(DR_SF9, 14);
 }
 u2_t readsensor_temp() {
-	HAL_GPIO_WritePin(ALIM_TEMP_GPIO_Port, ALIM_TEMP_Pin, 1);
-	HAL_Delay(10);
-	u2_t temp_val = adc_read_channel(ADC_CHANNEL_15);
-	HAL_GPIO_WritePin(ALIM_TEMP_GPIO_Port, ALIM_TEMP_Pin, 0);
+	//HAL_GPIO_WritePin(ALIM_TEMP_GPIO_Port, ALIM_TEMP_Pin, 1);
+	//HAL_Delay(10);
+	u2_t temp_val = adc_read_channel(ADC_CHANNEL_9);				///
+	//HAL_GPIO_WritePin(ALIM_TEMP_GPIO_Port, ALIM_TEMP_Pin, 0);
 	return temp_val;
 }
 
 u2_t readsensor_lux() {
-	u2_t lux_val = adc_read_channel(ADC_CHANNEL_7);
+	u2_t lux_val = adc_read_channel(ADC_CHANNEL_15);
 	return lux_val;
 }
 
@@ -183,7 +224,7 @@ static osjob_t reportjob;
 static void reportfunc(osjob_t *j) {
 	// read sensor temp
 	u2_t temp_val = readsensor_temp();
-	float sensor_temp = lm94021_adc_to_tempC(temp_val);
+	float sensor_temp = LM35_GetTemperature (temp_val);	//lm94021_adc_to_tempC(temp_val);
 	debug_time();
 	debug_valfloat("Onboard sensor temp -> ", sensor_temp, 4);
 	debug_str(" °C\r\n");
@@ -202,6 +243,15 @@ static void reportfunc(osjob_t *j) {
 	// prepare and schedule data for transmission
 	LMIC_setTxData2(1, lpp.buffer, lpp.cursor, 0);            // port 1, 8 octets, unconfirmed
 
+	// Affichage
+	char Texte[20];
+
+	sprintf(Texte,"Lum : %u lux      ",sensor_lux);
+	DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
+	DFRobot_RGBLCD1602_print(&Ecran_I2C,Texte);
+	sprintf(Texte,"Temp : %0.2f C     ",sensor_temp);
+	DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 1);
+	DFRobot_RGBLCD1602_print(&Ecran_I2C,Texte);
 	// reschedule job in 15 seconds
 	//os_setTimedCallback(j, os_getTime() + sec2osticks(15), reportfunc);
 }
@@ -258,15 +308,7 @@ void onEvent(ev_t ev) {
 	}
 }
 
-static void hellofunc(osjob_t *j) {
-	debug_str("Hello World!\r\n");
 
-	debug_val("cnt = ", cnt);
-
-	debug_led(++cnt & 1);
-
-	os_setTimedCallback(j, os_getTime() + sec2osticks(1), hellofunc);
-}
 /* USER CODE END 0 */
 
 /**
@@ -299,13 +341,14 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_SPI3_Init();
-  MX_USART1_UART_Init();
   MX_ADC1_Init();
   MX_TIM16_Init();
+  MX_I2C1_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 	HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
 
-	HAL_GPIO_WritePin(ALIM_TEMP_GPIO_Port, ALIM_TEMP_Pin, 1);
+	//HAL_GPIO_WritePin(ALIM_TEMP_GPIO_Port, ALIM_TEMP_Pin, 1);
 
 	HAL_TIM_Base_Start_IT(&htim16);   // <----------- change to your setup
 
@@ -320,8 +363,12 @@ int main(void)
 	// setup initial job
 	//os_setCallback(&hellojob, hellofunc);
 
+	RGBLCD1602_ECRAN_I2C_Init(&Ecran_I2C,&hi2c1,0,128,255);
+
 	os_setCallback(&initjob, initfunc);
 	// execute scheduled jobs and events
+	RGBLCD1602_ECRAN_start_com(&Ecran_I2C);
+
 	os_runloop();
 	// (not reached)
 	return 0;

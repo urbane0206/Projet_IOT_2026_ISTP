@@ -34,7 +34,7 @@
 #include "tim.h"
 #include "gpio.h"
 
-#define myUART huart1   //  <--------- change to your setup
+#define myUART huart2/*huart1  */ //  <--------- change to your setup
 
 static u4_t compteur_trames = 1;
 
