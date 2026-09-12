@@ -38,7 +38,11 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef struct {
+	uint8_t red;
+	uint8_t green;
+	uint8_t blue;
+} Color;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -50,6 +54,8 @@
 #define DFR0026_R_LOAD_OHM   470.0f
 #define PT550_UA_PER_LUX     0.90f       /* à recaler avec un luxmètre */
 #define DFR0026_MV_PER_LUX   (DFR0026_R_LOAD_OHM * PT550_UA_PER_LUX / 1000.0f)
+
+#define Temps_eveille 30 //30s
 
 /* USER CODE END PD */
 
@@ -72,8 +78,6 @@ static const u1_t DEVEUI[8] = { 0x4C, 0x8F, 0x07, 0xD0, 0x7E, 0xD5, 0xB3, 0x70 }
 static const u1_t DEVKEY[16] = { 0xA1, 0x99, 0x31, 0x2B, 0xF2, 0xD4, 0x43, 0x61,
 		0x56, 0x08, 0xBC, 0x1F, 0x51, 0x1B, 0xEA, 0x2F };
 
-static int cnt = 0;
-
 static osjob_t blinkjob;
 
 static u1_t ledstate = 0;
@@ -82,6 +86,14 @@ static cayenne_lpp_t lpp;   // statique : buffer de 51 octets, pas sur la pile
 
 RGBLCD1602_t Ecran_I2C; //creation de l'objet
 
+volatile uint8_t pagestate = 0;
+
+volatile uint8_t eveil = 1;
+
+volatile uint32_t time_sleep=0;
+
+Color Couleur_Attente = {0, 128, 255};
+Color Couleur_connecte = {0, 255, 0};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -143,29 +155,12 @@ static u2_t adc_read_channel(uint32_t channel) {
 static void blinkfunc(osjob_t *j) {
 // toggle LED
 	ledstate = !ledstate;
-	debug_led(ledstate);
+	//debug_led(ledstate);
+
 // reschedule blink job
+	DFRobot_RGBLCD1602_setRGB_control(&Ecran_I2C,ledstate,Couleur_Attente.red,Couleur_Attente.green,Couleur_Attente.blue);
+
 	os_setTimedCallback(j, os_getTime() + ms2osticks(100), blinkfunc);
-}
-
-void RGBLCD1602_ECRAN_I2C_Init(RGBLCD1602_t *lcd, I2C_HandleTypeDef *hi2c, u1_t red, u1_t green, u1_t blue)
-{
-	DFRobot_RGBLCD1602(lcd, hi2c, LCD_ADDRESS, RGBAddr, 16, 2);
-
-	DFRobot_RGBLCD1602_init(lcd);
-
-	HAL_Delay(10);
-	DFRobot_RGBLCD1602_clear(lcd);
-
-	DFRobot_RGBLCD1602_setRGB(lcd, red, green, blue);
-	/*
-	DFRobot_RGBLCD1602_setCursor(lcd, 0, 0);
-	DFRobot_RGBLCD1602_print(lcd, "Nucleo L476RG");
-
-	DFRobot_RGBLCD1602_setCursor(lcd, 0, 1);
-	DFRobot_RGBLCD1602_print(lcd, "LCD 1602 RGB");
-	*/
-	HAL_Delay(10);
 }
 
 void RGBLCD1602_ECRAN_start_com(RGBLCD1602_t *lcd)
@@ -178,6 +173,7 @@ void RGBLCD1602_ECRAN_start_com(RGBLCD1602_t *lcd)
 	DFRobot_RGBLCD1602_setCursor(lcd, 0, 1);
 	DFRobot_RGBLCD1602_print(lcd, "Attente downlink");
 }
+
 
 // provide application router ID (8 bytes, LSBF)
 void os_getArtEui(u1_t *buf) {
@@ -243,15 +239,39 @@ static void reportfunc(osjob_t *j) {
 	// prepare and schedule data for transmission
 	LMIC_setTxData2(1, lpp.buffer, lpp.cursor, 0);            // port 1, 8 octets, unconfirmed
 
-	// Affichage
+	// Affichage sur l'écran I2C
 	char Texte[20];
+	if (pagestate ==0)
+	{
+		sprintf(Texte,"Lum  : %u lux   ",sensor_lux);
+		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
+		DFRobot_RGBLCD1602_print(&Ecran_I2C,Texte);
 
-	sprintf(Texte,"Lum : %u lux      ",sensor_lux);
-	DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
-	DFRobot_RGBLCD1602_print(&Ecran_I2C,Texte);
-	sprintf(Texte,"Temp : %0.2f C     ",sensor_temp);
-	DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 1);
-	DFRobot_RGBLCD1602_print(&Ecran_I2C,Texte);
+		sprintf(Texte,"Temp : %0.2f C     ",sensor_temp);
+		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 1);
+		DFRobot_RGBLCD1602_print(&Ecran_I2C,Texte);
+	}
+	else {
+		DFRobot_RGBLCD1602_clear(&Ecran_I2C);
+
+		sprintf(Texte,"  Connexion OK  ");
+		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
+		DFRobot_RGBLCD1602_print(&Ecran_I2C,Texte);
+	}
+
+	if (eveil ==1)
+	{//on regarde si l'écran est retro éclairé
+		u4_t sec = ( osticks2ms(os_getTime()) / 1000 );
+		if (sec >= (time_sleep + Temps_eveille) )
+		{
+			DFRobot_RGBLCD1602_setRGB(&Ecran_I2C, 0,0,0);
+			eveil =0;
+
+		}
+		else {
+			DFRobot_RGBLCD1602_setRGB(&Ecran_I2C, Couleur_connecte.red,Couleur_connecte.green,Couleur_connecte.blue);
+		}
+	}
 	// reschedule job in 15 seconds
 	//os_setTimedCallback(j, os_getTime() + sec2osticks(15), reportfunc);
 }
@@ -268,7 +288,8 @@ void onEvent(ev_t ev) {
 	case EV_JOINED:
 		// kick-off periodic sensor job
 		os_clearCallback(&blinkjob);
-		debug_led(1);
+		//debug_led(1);
+		DFRobot_RGBLCD1602_setRGB(&Ecran_I2C, 0,255,0);
 		LMIC_setAdrMode(0);
 		LMIC_setLinkCheckMode(0);
 		LMIC_setDrTxpow(DR_SF7, 20);

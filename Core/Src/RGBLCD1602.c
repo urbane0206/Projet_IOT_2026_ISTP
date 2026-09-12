@@ -404,5 +404,36 @@ void DFRobot_RGBLCD1602_setReg(RGBLCD1602_t *lcd,uint8_t addr, uint8_t data)
 
 }
 
+void RGBLCD1602_ECRAN_I2C_Init(RGBLCD1602_t *lcd, I2C_HandleTypeDef *hi2c, uint8_t red, uint8_t green, uint8_t blue)
+{
+	DFRobot_RGBLCD1602(lcd, hi2c, LCD_ADDRESS, RGBAddr, 16, 2);
 
+	DFRobot_RGBLCD1602_init(lcd);
+
+	HAL_Delay(10);
+	DFRobot_RGBLCD1602_clear(lcd);
+
+	DFRobot_RGBLCD1602_setRGB(lcd, red, green, blue);
+
+	HAL_Delay(10);
+}
+
+void DFRobot_RGBLCD1602_setRGB_control(RGBLCD1602_t *lcd, uint8_t activation, uint8_t red, uint8_t green, uint8_t blue)
+{
+	if (activation == 0)
+	{
+		DFRobot_RGBLCD1602_setRGB(lcd, 0,0,0);
+	}
+	else
+		DFRobot_RGBLCD1602_setRGB(lcd, red, green, blue);
+}
+
+void RGBLCD1602_ECRAN_splash_screen(RGBLCD1602_t *lcd)
+{
+	DFRobot_RGBLCD1602_setCursor(lcd, 0, 0);
+	DFRobot_RGBLCD1602_print(lcd, "Nucleo L476RG");
+
+	DFRobot_RGBLCD1602_setCursor(lcd, 0, 1);
+	DFRobot_RGBLCD1602_print(lcd, "LCD 1602 RGB");
+}
 

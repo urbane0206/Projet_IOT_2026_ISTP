@@ -136,7 +136,7 @@ Change the RGBaddr value based on the hardware version
 
   /**
    * @fn DFRobot_RGBLCD1602
-   * @brief Print des char
+   * @brief Print des strings
    */
   void DFRobot_RGBLCD1602_print(RGBLCD1602_t *lcd, char *str);
 
@@ -337,6 +337,23 @@ Change the RGBaddr value based on the hardware version
    */
   void DFRobot_RGBLCD1602_setReg(RGBLCD1602_t *lcd,uint8_t addr, uint8_t data);
 
+  /**
+   * @fn DFRobot_RGBLCD1602
+   * @brief Init l'écran et active le backlight
+   */
+  void RGBLCD1602_ECRAN_I2C_Init(RGBLCD1602_t *lcd, I2C_HandleTypeDef *hi2c, uint8_t red, uint8_t green, uint8_t blue);
+
+  /**
+   * @fn DFRobot_RGBLCD1602
+   * @brief active ou non la couleur du RGB du backlight
+   */
+  void DFRobot_RGBLCD1602_setRGB_control(RGBLCD1602_t *lcd, uint8_t activation, uint8_t red, uint8_t green, uint8_t blue);
+
+  /**
+   * @fn DFRobot_RGBLCD1602
+   * @brief Affiche "Nucleo L476RG" sur la première ligne et "LCD 1602 RGB" sur la seconde ligne
+   */
+  void RGBLCD1602_ECRAN_splash_screen(RGBLCD1602_t *lcd);
 
 
 #endif

@@ -63,8 +63,9 @@ void Error_Handler(void);
 #define LUX_GPIO_Port GPIOB
 #define RST_Pin GPIO_PIN_11
 #define RST_GPIO_Port GPIOA
-#define LED1_Pin GPIO_PIN_12
-#define LED1_GPIO_Port GPIOA
+#define BPJaune_Pin GPIO_PIN_12
+#define BPJaune_GPIO_Port GPIOA
+#define BPJaune_EXTI_IRQn EXTI15_10_IRQn
 #define NSS_Pin GPIO_PIN_15
 #define NSS_GPIO_Port GPIOA
 #define DIO0_Pin GPIO_PIN_6
@@ -75,7 +76,11 @@ void Error_Handler(void);
 #define DIO1_EXTI_IRQn EXTI9_5_IRQn
 
 /* USER CODE BEGIN Private defines */
+extern volatile uint8_t pagestate; //variable pour changer des pages utilisables dans tous les fichiers (notamment hal.c)
 
+extern volatile uint8_t eveil;	//variable pour savoir si l'écran est allumé ou non
+
+extern volatile uint32_t time_sleep; //enregistre le temps pour savoir le temps pour s'éteindre
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

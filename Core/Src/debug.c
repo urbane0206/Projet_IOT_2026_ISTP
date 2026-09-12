@@ -64,10 +64,12 @@ void debug_banner_lorawan (void) {
     debug_str("               STM32 + LMIC OS - NODE READY                    \r\n");
     debug_str(" ==============================================================\r\n\r\n");
 }
-
+/*		//Desac car pas d'utilité (l'ecran clignote)
 void debug_led (int val) {
     HAL_GPIO_WritePin(LED1_GPIO_Port,LED1_Pin,val);
 }
+*/
+
 
 void debug_char (char c) {
   char buffer[] = "";
@@ -213,6 +215,7 @@ void debug_event (int ev) {
     };
     if (ev == EV_JOINED) {
         debug_banner_joined();
+        time_sleep = ( osticks2ms(os_getTime()) / 1000 );
     }
     if (ev == EV_TXSTART) {
     	debug_header_trame(compteur_trames++);

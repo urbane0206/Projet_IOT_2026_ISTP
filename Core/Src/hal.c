@@ -38,9 +38,12 @@
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
+#include "debug.h"
 
 #define myTIMER htim16   //  <--------- change to your setup
 #define mySPI hspi3     //  <--------- change to your setup
+
+
 
 /*  ************************************** */
 /*    DO NOT CHANGE BELOW THIS LINE        */
@@ -109,6 +112,13 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin_int){
 	if(GPIO_Pin_int == DIO1_Pin) {
 	    // invoke radio handler (on IRQ!)
 		radio_irq_handler(1);
+	}
+	if (GPIO_Pin_int == BPJaune_Pin){ //Bouton pour changer de page sur l'écran
+			pagestate =!pagestate;
+			eveil =1;
+			time_sleep = ( osticks2ms(os_getTime()) / 1000 );
+			debug_time();
+			debug_str("Réveil, changement de page\r\n");
 	}
 	// DIO 2
 //	if(GPIO_Pin_int == DIO2_Pin) {
@@ -185,6 +195,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	if(htim->Instance == myTIMER.Instance){
 		HAL.ticks++;
     }
+
 }
 
 // -----------------------------------------------------------------------------
