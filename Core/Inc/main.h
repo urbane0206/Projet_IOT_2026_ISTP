@@ -81,6 +81,7 @@ extern volatile uint8_t pagestate; //variable pour changer des pages utilisables
 extern volatile uint8_t eveil;	//variable pour savoir si l'écran est allumé ou non
 
 extern volatile uint32_t time_sleep; //enregistre le temps pour savoir le temps pour s'éteindre
+
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

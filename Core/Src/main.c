@@ -55,7 +55,7 @@ typedef struct {
 #define PT550_UA_PER_LUX     0.90f       /* à recaler avec un luxmètre */
 #define DFR0026_MV_PER_LUX   (DFR0026_R_LOAD_OHM * PT550_UA_PER_LUX / 1000.0f)
 
-#define Temps_eveille 30 //30s
+#define Temps_eveille 5 //30s&
 
 /* USER CODE END PD */
 
@@ -84,6 +84,7 @@ static u1_t ledstate = 0;
 
 static cayenne_lpp_t lpp;   // statique : buffer de 51 octets, pas sur la pile
 
+
 RGBLCD1602_t Ecran_I2C; //creation de l'objet
 
 volatile uint8_t pagestate = 0;
@@ -92,8 +93,10 @@ volatile uint8_t eveil = 1;
 
 volatile uint32_t time_sleep=0;
 
-Color Couleur_Attente = {0, 128, 255};
-Color Couleur_connecte = {0, 255, 0};
+static Color Couleur_Attente = {0, 128, 255};
+
+static Color Couleur_connecte = {0, 255, 0};
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -121,10 +124,12 @@ float lm94021_adc_to_tempC(u2_t adc) {
     return x + 30.0f;                    // T = x + 30
 }
 
+
 float LM35_GetTemperature(u2_t adc)
 {
     return (330.0f * adc) / 4095.0f;
 }
+
 
 uint16_t dfr0026_adc_to_lux(u2_t adc) {
     float v_mv = (float)adc * VREF_MV / ADC_MAX;
@@ -241,6 +246,7 @@ static void reportfunc(osjob_t *j) {
 
 	// Affichage sur l'écran I2C
 	char Texte[20];
+
 	if (pagestate ==0)
 	{
 		sprintf(Texte,"Lum  : %u lux   ",sensor_lux);
@@ -257,7 +263,11 @@ static void reportfunc(osjob_t *j) {
 		sprintf(Texte,"  Connexion OK  ");
 		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
 		DFRobot_RGBLCD1602_print(&Ecran_I2C,Texte);
-	}
+
+		sprintf(Texte,"     Page 2     ");
+		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 1);
+		DFRobot_RGBLCD1602_print(&Ecran_I2C,Texte);
+}
 
 	if (eveil ==1)
 	{//on regarde si l'écran est retro éclairé
@@ -266,12 +276,13 @@ static void reportfunc(osjob_t *j) {
 		{
 			DFRobot_RGBLCD1602_setRGB(&Ecran_I2C, 0,0,0);
 			eveil =0;
-
 		}
 		else {
 			DFRobot_RGBLCD1602_setRGB(&Ecran_I2C, Couleur_connecte.red,Couleur_connecte.green,Couleur_connecte.blue);
 		}
 	}
+
+
 	// reschedule job in 15 seconds
 	//os_setTimedCallback(j, os_getTime() + sec2osticks(15), reportfunc);
 }
