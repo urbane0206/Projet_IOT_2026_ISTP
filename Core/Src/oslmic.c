@@ -26,12 +26,15 @@
  */
 
 #include "lmic.h"
+#include "debug.h"
 
 // RUNTIME STATE
 static struct {
     osjob_t* scheduledjobs;
     osjob_t* runnablejobs;
 } OS;
+
+static ostime_t slept = 0;
 
 void os_init () {
     memset(&OS, 0x00, sizeof(OS));
@@ -99,6 +102,8 @@ void os_setTimedCallback (osjob_t* job, ostime_t time, osjobcb_t cb) {
     hal_enableIRQs();
 }
 
+
+
 // execute jobs from timer and from run queue
 void os_runloop () {
     while(1) {
@@ -112,13 +117,19 @@ void os_runloop () {
             j = OS.scheduledjobs;
             OS.scheduledjobs = j->next;
         } else { // nothing pending
+            ostime_t t0 = os_getTime();
             hal_sleep(); // wake by irq (timer already restarted)
+            slept += os_getTime() - t0;   // cumule les micro-sommeils
         }
         hal_enableIRQs();
         if(j) { // run job callback
-            ASSERT(j->func != NULL);//
+            if(slept > ms2osticks(5)) {   // n'affiche que si on a vraiment dormi
+                debug_valdec("slept ms = ", osticks2ms(slept));
+                debug_str("\r\n");
+            }
+            slept = 0;
+            ASSERT(j->func != NULL);
             j->func(j);
-
         }
     }
 }

@@ -103,23 +103,23 @@ extern void radio_irq_handler(u1_t dio);
 
 // generic EXTI IRQ handler for all channels
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin_int){
-	// DIO 0
-	if(GPIO_Pin_int == DIO0_Pin) {
-		// invoke radio handler (on IRQ!)
-		radio_irq_handler(0);
-	}
-	// DIO 1
-	if(GPIO_Pin_int == DIO1_Pin) {
-	    // invoke radio handler (on IRQ!)
-		radio_irq_handler(1);
-	}
-	if (GPIO_Pin_int == BPJaune_Pin){ //Bouton pour changer de page sur l'écran
-			pagestate =!pagestate;
-			eveil =1;
-			time_sleep = ( osticks2ms(os_getTime()) / 1000 );
-			debug_time();
-			debug_str("Réveil, changement de page\r\n");
-	}
+    if(GPIO_Pin_int == DIO0_Pin) radio_irq_handler(0);
+    if(GPIO_Pin_int == DIO1_Pin) radio_irq_handler(1);
+
+    if(GPIO_Pin_int == BPJaune_Pin){
+        static ostime_t last = 0;
+        ostime_t now = os_getTime();
+        if(now - last < ms2osticks(200)) return;   // anti-rebond
+        last = now;
+
+        	if(eveil) {
+        		pagestate = !pagestate;
+        	}
+        	eveil = 1;
+        time_sleep = now;                          // en ticks, voir ci-dessous
+        os_setCallback(&lcdjob, lcdjobfunc);       // affichage hors IRQ
+    }
+
 	// DIO 2
 //	if(GPIO_Pin_int == DIO2_Pin) {
 	//    // invoke radio handler (on IRQ!)

@@ -31,7 +31,7 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "lmic.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -53,7 +53,7 @@ extern "C" {
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
-
+void lcd_manager(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
@@ -81,6 +81,10 @@ extern volatile uint8_t pagestate; //variable pour changer des pages utilisables
 extern volatile uint8_t eveil;	//variable pour savoir si l'écran est allumé ou non
 
 extern volatile uint32_t time_sleep; //enregistre le temps pour savoir le temps pour s'éteindre
+
+extern osjob_t lcdjob;
+
+void lcdjobfunc(osjob_t *j);
 
 /* USER CODE END Private defines */
 
