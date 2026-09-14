@@ -76,11 +76,6 @@ void lcd_manager(void);
 #define DIO1_EXTI_IRQn EXTI9_5_IRQn
 
 /* USER CODE BEGIN Private defines */
-extern volatile uint8_t pagestate; //variable pour changer des pages utilisables dans tous les fichiers (notamment hal.c)
-
-extern volatile uint8_t eveil;	//variable pour savoir si l'écran est allumé ou non
-
-extern volatile uint32_t time_sleep; //enregistre le temps pour savoir le temps pour s'éteindre
 
 extern osjob_t lcdjob;
 

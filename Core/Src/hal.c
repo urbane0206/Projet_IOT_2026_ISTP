@@ -107,16 +107,12 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin_int){
     if(GPIO_Pin_int == DIO1_Pin) radio_irq_handler(1);
 
     if(GPIO_Pin_int == BPJaune_Pin){
+    	if (LMIC.opmode & OP_JOINING) return;
         static ostime_t last = 0;
         ostime_t now = os_getTime();
         if(now - last < ms2osticks(200)) return;   // anti-rebond
         last = now;
 
-        	if(eveil) {
-        		pagestate = !pagestate;
-        	}
-        	eveil = 1;
-        time_sleep = now;                          // en ticks, voir ci-dessous
         os_setCallback(&lcdjob, lcdjobfunc);       // affichage hors IRQ
     }
 

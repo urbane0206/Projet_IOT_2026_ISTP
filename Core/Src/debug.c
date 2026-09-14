@@ -215,8 +215,6 @@ void debug_event (int ev) {
     };
     if (ev == EV_JOINED) {
         debug_banner_joined();
-        time_sleep = ( osticks2ms(os_getTime()) / 1000 );
-
     }
     if (ev == EV_TXSTART) {
     	debug_header_trame(compteur_trames++);

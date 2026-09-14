@@ -124,8 +124,8 @@ void os_runloop () {
         hal_enableIRQs();
         if(j) { // run job callback
             if(slept > ms2osticks(5)) {   // n'affiche que si on a vraiment dormi
-                debug_valdec("slept ms = ", osticks2ms(slept));
-                debug_str("\r\n");
+                //debug_valdec("slept ms = ", osticks2ms(slept));
+                //debug_str("\r\n");
             }
             slept = 0;
             ASSERT(j->func != NULL);

@@ -43,6 +43,14 @@ typedef struct {
 	uint8_t green;
 	uint8_t blue;
 } Color;
+
+typedef enum {
+	PAGE_1 = 0,
+	PAGE_2,
+	PAGE_3,
+	PAGE_4,
+	PAGE_5
+} page_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -78,7 +86,7 @@ static const u1_t DEVKEY[16] = { 0xA1, 0x99, 0x31, 0x2B, 0xF2, 0xD4, 0x43, 0x61,
 
 static osjob_t blinkjob;
 
-osjob_t lcdjob;
+static osjob_t backlightjob;
 
 static osjob_t reportjob;
 
@@ -86,20 +94,21 @@ static u1_t ledstate = 0;
 
 static cayenne_lpp_t lpp;   // statique : buffer de 51 octets, pas sur la pile
 
+osjob_t lcdjob;
 
 RGBLCD1602_t Ecran_I2C; //creation de l'objet
 
-volatile uint8_t pagestate = 0;
-
 volatile uint8_t eveil = 1;
 
-volatile uint32_t time_sleep = 0;
+volatile uint32_t t_since_press = 0;
 
 char Texte[20];
 
 float sensor_temp = 0;
 
 uint16_t sensor_lux = 0;
+
+volatile page_t pagestate = 0;
 
 /* USER CODE END PV */
 
@@ -166,7 +175,6 @@ static void blinkfunc(osjob_t *j) {
 	ledstate = !ledstate;
 	//debug_led(ledstate);
 
-
 	if (ledstate) {
 		RGBLCD1602_setColor(&Ecran_I2C, LCD_COLOR_BLUE);
 	} else {
@@ -179,7 +187,7 @@ static void blinkfunc(osjob_t *j) {
 
 void RGBLCD1602_ECRAN_start_com(RGBLCD1602_t *lcd, u1_t datarate, u4_t freq)
 {
-	char ligne[17];
+	char ligne[20];
 
 	DFRobot_RGBLCD1602_clear(lcd);
 
@@ -235,51 +243,82 @@ u2_t readsensor_lux() {
 	return lux_val;
 }
 
-void lcd_manager(){
-		// Affichage sur l'écran I2C
-		if (pagestate == 0)
-		{
-			DFRobot_RGBLCD1602_clear(&Ecran_I2C);
+static void backlightoff(osjob_t *j) {
+	RGBLCD1602_setColor(&Ecran_I2C, LCD_COLOR_OFF);
+	eveil = 0;
+}
 
-			sprintf(Texte,"Lum  : %u lux",sensor_lux);
-			DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
-			DFRobot_RGBLCD1602_print(&Ecran_I2C,Texte);
+static void backlight_wake(uint32_t rgb) {
+	eveil = 1;
+	RGBLCD1602_setColor(&Ecran_I2C, rgb);
+	os_setTimedCallback(&backlightjob, os_getTime() + sec2osticks(Temps_eveille), backlightoff);
+}
 
-			sprintf(Texte,"Temp : %0.1f Deg",sensor_temp);
-			DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 1);
-			DFRobot_RGBLCD1602_print(&Ecran_I2C,Texte);
-		}
-		else {
-			DFRobot_RGBLCD1602_clear(&Ecran_I2C);
-
-			sprintf(Texte,"  Connexion OK  ");
-			DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
-			DFRobot_RGBLCD1602_print(&Ecran_I2C,Texte);
-
-			sprintf(Texte,"     Page 2     ");
-			DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 1);
-			DFRobot_RGBLCD1602_print(&Ecran_I2C,Texte);
-		}
-
-		if (eveil == 1)
-		{//on regarde si l'écran est retro éclairé
-			u4_t sec = ( osticks2ms(os_getTime()) / 1000 );
-			if (sec >= (time_sleep + Temps_eveille) )
-			{
-				RGBLCD1602_setColor(&Ecran_I2C, LCD_COLOR_OFF);
-				eveil = 0;
-			}
-			else {
-				RGBLCD1602_setColor(&Ecran_I2C, LCD_COLOR_WHITE);
-			}
-		}
+void lcd_manager(void) {   /* texte uniquement */
+	DFRobot_RGBLCD1602_clear(&Ecran_I2C);
+	switch (pagestate) {
+	case PAGE_1 :
+		// TOP
+		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
+		DFRobot_RGBLCD1602_print(&Ecran_I2C, "     PAGE 1  ");
+		// BOTTOM
+		snprintf(Texte, sizeof Texte, "Temp : %0.1f Deg", sensor_temp);
+		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 1);
+		DFRobot_RGBLCD1602_print(&Ecran_I2C, Texte);
+		break;
+	case PAGE_2 :
+		// TOP
+		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
+		DFRobot_RGBLCD1602_print(&Ecran_I2C, "     PAGE 2  ");
+		// BOTTOM
+		snprintf(Texte, sizeof Texte, "Lum  : %u lux", sensor_lux);
+		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 1);
+		DFRobot_RGBLCD1602_print(&Ecran_I2C, Texte);
+		break;
+	case PAGE_3 :
+		// TOP
+		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
+		DFRobot_RGBLCD1602_print(&Ecran_I2C, "     PAGE 3  ");
+		// BOTTOM
+		snprintf(Texte, sizeof Texte, "Lum  : %u lux", sensor_lux);
+		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 1);
+		DFRobot_RGBLCD1602_print(&Ecran_I2C, Texte);
+		break;
+	case PAGE_4 :
+		// TOP
+		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
+		DFRobot_RGBLCD1602_print(&Ecran_I2C, "     PAGE 4  ");
+		// BOTTOM
+		snprintf(Texte, sizeof Texte, "Lum  : %u lux", sensor_lux);
+		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 1);
+		DFRobot_RGBLCD1602_print(&Ecran_I2C, Texte);
+		break;
+	case PAGE_5 :
+		// TOP
+		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
+		DFRobot_RGBLCD1602_print(&Ecran_I2C, "     PAGE 5  ");
+		// BOTTOM
+		snprintf(Texte, sizeof Texte, "Lum  : %u lux", sensor_lux);
+		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 1);
+		DFRobot_RGBLCD1602_print(&Ecran_I2C, Texte);
+		break;
+	}
 
 }
 
-void lcdjobfunc(osjob_t *j) {
-    lcd_manager();
-    debug_time();
-    debug_str("Change page\r\n");
+void lcdjobfunc(osjob_t *j) {   /* appui bouton, appelé via os_setCallback seulement */
+
+	if (eveil) {
+		pagestate ++;
+		if (pagestate > 4) {
+			pagestate = 0;
+		}
+	}
+
+	backlight_wake(LCD_COLOR_WHITE);
+	lcd_manager();
+	debug_time();
+	debug_str("Change page cmd\r\n");
 }
 
 // report sensor value every minute
@@ -304,6 +343,7 @@ static void reportfunc(osjob_t *j) {
 	cayenne_lpp_add_luminosity(&lpp, 2, sensor_lux);		  // canal 2 : lux
 	// prepare and schedule data for transmission
 	LMIC_setTxData2(1, lpp.buffer, lpp.cursor, 0);            // port 1, 8 octets, unconfirmed
+
 	lcd_manager();
 
 	// reschedule job in 15 seconds
@@ -320,12 +360,13 @@ void onEvent(ev_t ev) {
 		blinkfunc(&blinkjob);
 		break;
 	case EV_JOINED:
+		t_since_press = ( osticks2ms(os_getTime()) / 1000 );
 		// kick-off periodic sensor job
 		os_clearCallback(&blinkjob);
-		//debug_led(1);
-		DFRobot_RGBLCD1602_setRGB(&Ecran_I2C, 0,255,0);
 		LMIC_setAdrMode(0);
 		LMIC_setLinkCheckMode(0);
+		backlight_wake(LCD_COLOR_WHITE);
+		lcd_manager();
 		reportfunc(&reportjob);
 		break;
 	case EV_TXCOMPLETE:
@@ -358,7 +399,6 @@ void onEvent(ev_t ev) {
 			RGBLCD1602_ECRAN_start_com(&Ecran_I2C, LMIC.datarate, LMIC.freq);
 		break;
 	default:
-		debug_str("  -> unknown event\r\n");
 		break;
 	}
 }
