@@ -65,6 +65,11 @@ typedef enum {
 
 #define Temps_eveille 5
 
+#define ONE_Hz 1000
+#define TWO_Hz 500
+#define FIVE_Hz 200
+#define TEN_Hz 100
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -84,8 +89,6 @@ static const u1_t DEVEUI[8] = { 0x4C, 0x8F, 0x07, 0xD0, 0x7E, 0xD5, 0xB3, 0x70 }
 static const u1_t DEVKEY[16] = { 0xA1, 0x99, 0x31, 0x2B, 0xF2, 0xD4, 0x43, 0x61,
 		0x56, 0x08, 0xBC, 0x1F, 0x51, 0x1B, 0xEA, 0x2F };
 
-static osjob_t blinkjob;
-
 static osjob_t backlightjob;
 
 static osjob_t reportjob;
@@ -95,6 +98,8 @@ static u1_t ledstate = 0;
 static cayenne_lpp_t lpp;   // statique : buffer de 51 octets, pas sur la pile
 
 osjob_t lcdjob;
+
+osjob_t longpressjob;
 
 RGBLCD1602_t Ecran_I2C; //creation de l'objet
 
@@ -110,12 +115,18 @@ uint16_t sensor_lux = 0;
 
 volatile page_t pagestate = 0;
 
+static osjob_t  blinkjob;
+static uint32_t blink_rgb;
+static uint32_t blink_ms;
+static uint8_t  ledstate;
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-
+static void backlight_cmd(uint32_t rgb, uint8_t cmd);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -171,19 +182,22 @@ static u2_t adc_read_channel(uint32_t channel) {
 }
 
 static void blinkfunc(osjob_t *j) {
-// toggle LED
 	ledstate = !ledstate;
-	//debug_led(ledstate);
-
-	if (ledstate) {
-		RGBLCD1602_setColor(&Ecran_I2C, LCD_COLOR_BLUE);
-	} else {
-		RGBLCD1602_setColor(&Ecran_I2C, LCD_COLOR_OFF);
-	}
-
-	// reschedule blink job
-	os_setTimedCallback(j, os_getTime() + ms2osticks(1000), blinkfunc);
+	backlight_cmd(blink_rgb, ledstate);
+	os_setTimedCallback(j, os_getTime() + ms2osticks(blink_ms), blinkfunc);
 }
+
+void blink_start(uint32_t rgb, uint32_t period_ms) {
+	blink_rgb = rgb;
+	blink_ms  = period_ms;
+	ledstate  = 0;
+	blinkfunc(&blinkjob);
+}
+
+void blink_stop(void) {
+	os_clearCallback(&blinkjob);
+}
+
 
 void RGBLCD1602_ECRAN_start_com(RGBLCD1602_t *lcd, u1_t datarate, u4_t freq)
 {
@@ -217,7 +231,7 @@ void os_getDevKey(u1_t *buf) {
 	memcpy(buf, DEVKEY, 16);
 }
 void initsensor() {
-// Here you init your sensors
+
 }
 
 void initfunc(osjob_t *j) {
@@ -252,6 +266,14 @@ static void backlight_wake(uint32_t rgb) {
 	eveil = 1;
 	RGBLCD1602_setColor(&Ecran_I2C, rgb);
 	os_setTimedCallback(&backlightjob, os_getTime() + sec2osticks(Temps_eveille), backlightoff);
+}
+
+static void backlight_cmd(uint32_t rgb, uint8_t cmd) {
+	if (cmd) {
+		RGBLCD1602_setColor(&Ecran_I2C, rgb);
+	} else {
+		RGBLCD1602_setColor(&Ecran_I2C, LCD_COLOR_OFF);
+	}
 }
 
 void lcd_manager(void) {   /* texte uniquement */
@@ -306,8 +328,8 @@ void lcd_manager(void) {   /* texte uniquement */
 
 }
 
-void lcdjobfunc(osjob_t *j) {   /* appui bouton, appelé via os_setCallback seulement */
-
+void lcdjobfunc(osjob_t *j) {   /* appui bouton, appelé via os_setCallback */
+	blink_stop();
 	if (eveil) {
 		pagestate ++;
 		if (pagestate > 4) {
@@ -319,6 +341,12 @@ void lcdjobfunc(osjob_t *j) {   /* appui bouton, appelé via os_setCallback seul
 	lcd_manager();
 	debug_time();
 	debug_str("Change page cmd\r\n");
+}
+
+void longpressfunc(osjob_t *j) {   /* appui bouton, appelé via os_setCallback seulement */
+	blink_start(LCD_COLOR_RED, FIVE_Hz);
+	debug_time();
+	debug_str("long press cmd\r\n");
 }
 
 // report sensor value every minute
@@ -357,12 +385,12 @@ void onEvent(ev_t ev) {
 	debug_event(ev);   // source unique du nom de l'event
 	switch (ev) {
 	case EV_JOINING:
-		blinkfunc(&blinkjob);
+		blink_start(LCD_COLOR_BLUE, ONE_Hz);
 		break;
 	case EV_JOINED:
 		t_since_press = ( osticks2ms(os_getTime()) / 1000 );
 		// kick-off periodic sensor job
-		os_clearCallback(&blinkjob);
+		blink_stop();
 		LMIC_setAdrMode(0);
 		LMIC_setLinkCheckMode(0);
 		backlight_wake(LCD_COLOR_WHITE);

@@ -43,6 +43,11 @@
 #define myTIMER htim16   //  <--------- change to your setup
 #define mySPI hspi3     //  <--------- change to your setup
 
+#define BTN_DEBOUNCE_MS   30
+#define BTN_LONG_MS       2000
+
+static ostime_t press_t0    = 0;    /* date du dernier appui */
+static ostime_t last_edge   = 0;    /* date du dernier front accepté */
 
 
 /*  ************************************** */
@@ -106,21 +111,27 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin_int){
     if(GPIO_Pin_int == DIO0_Pin) radio_irq_handler(0);
     if(GPIO_Pin_int == DIO1_Pin) radio_irq_handler(1);
 
-    if(GPIO_Pin_int == BPJaune_Pin){
-    	if (LMIC.opmode & OP_JOINING) return;
-        static ostime_t last = 0;
-        ostime_t now = os_getTime();
-        if(now - last < ms2osticks(200)) return;   // anti-rebond
-        last = now;
+    /* hal.c — dans HAL_GPIO_EXTI_Callback */
+        if(GPIO_Pin_int == BPJaune_Pin){
+            if (LMIC.opmode & OP_JOINING) return;
 
-        os_setCallback(&lcdjob, lcdjobfunc);       // affichage hors IRQ
-    }
+            ostime_t now = os_getTime();
+            if(now - last_edge < ms2osticks(BTN_DEBOUNCE_MS)) return;   /* rebond */
+            last_edge = now;
 
-	// DIO 2
-//	if(GPIO_Pin_int == DIO2_Pin) {
-	//    // invoke radio handler (on IRQ!)
-//	    radio_irq_handler(2);
-//	}
+            if(HAL_GPIO_ReadPin(BPJaune_GPIO_Port, BPJaune_Pin) == GPIO_PIN_SET) {
+                /* ---- appui ---- */
+                press_t0 = now;
+                os_setTimedCallback(&longpressjob, now + ms2osticks(BTN_LONG_MS), longpressfunc);
+            } else {
+                /* ---- relâchement ---- */
+                if(now - press_t0 < ms2osticks(BTN_LONG_MS)) {
+                    os_clearCallback(&longpressjob);          /* pas encore tiré → appui court */
+                    os_setCallback(&lcdjob, lcdjobfunc);
+                }
+
+            }
+        }
 }
 
 // -----------------------------------------------------------------------------

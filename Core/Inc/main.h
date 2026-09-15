@@ -79,7 +79,11 @@ void lcd_manager(void);
 
 extern osjob_t lcdjob;
 
+extern osjob_t longpressjob;
+
 void lcdjobfunc(osjob_t *j);
+
+void longpressfunc(osjob_t *j);
 
 /* USER CODE END Private defines */
 
