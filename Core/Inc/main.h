@@ -53,12 +53,14 @@ extern "C" {
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
-void lcd_manager(void);
+
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
 #define TEMP_Pin GPIO_PIN_4
 #define TEMP_GPIO_Port GPIOA
+#define BUZZER_Pin GPIO_PIN_5
+#define BUZZER_GPIO_Port GPIOA
 #define LUX_Pin GPIO_PIN_0
 #define LUX_GPIO_Port GPIOB
 #define RST_Pin GPIO_PIN_11

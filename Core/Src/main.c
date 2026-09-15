@@ -49,7 +49,9 @@ typedef enum {
 	PAGE_2,
 	PAGE_3,
 	PAGE_4,
-	PAGE_5
+	PAGE_5,
+	PAGE_ERROR,
+	PAGE_CLEARED
 } page_t;
 /* USER CODE END PTD */
 
@@ -70,6 +72,14 @@ typedef enum {
 #define FIVE_Hz 200
 #define TEN_Hz 100
 
+#define SCREEN_CURSOR_ZERO 0
+#define SCREEN_UP 0
+#define SCREEN_DOWN 1
+
+#define NORMAL_BUF 0
+#define ERROR_BUF_UP 1
+#define ERROR_BUF_DOWN 2
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -81,52 +91,64 @@ typedef enum {
 
 /* USER CODE BEGIN PV */
 
-// application router ID (LSBF)
-static const u1_t APPEUI[8] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-// unique device ID (LSBF)
-static const u1_t DEVEUI[8] = { 0x4C, 0x8F, 0x07, 0xD0, 0x7E, 0xD5, 0xB3, 0x70 };
-// device-specific AES key (MSBF)
+
+static const u1_t APPEUI[8] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };// application router ID (LSBF)
+static const u1_t DEVEUI[8] = { 0x4C, 0x8F, 0x07, 0xD0, 0x7E, 0xD5, 0xB3, 0x70 };// unique device ID (LSBF)
 static const u1_t DEVKEY[16] = { 0xA1, 0x99, 0x31, 0x2B, 0xF2, 0xD4, 0x43, 0x61,
-		0x56, 0x08, 0xBC, 0x1F, 0x51, 0x1B, 0xEA, 0x2F };
+		0x56, 0x08, 0xBC, 0x1F, 0x51, 0x1B, 0xEA, 0x2F };// device-specific AES key (MSBF)
 
+
+static osjob_t  blinkjob;
 static osjob_t backlightjob;
-
 static osjob_t reportjob;
 
-static u1_t ledstate = 0;
-
-static cayenne_lpp_t lpp;   // statique : buffer de 51 octets, pas sur la pile
-
 osjob_t lcdjob;
-
 osjob_t longpressjob;
-
-RGBLCD1602_t Ecran_I2C; //creation de l'objet
+osjob_t buzzjob;
 
 volatile uint8_t eveil = 1;
-
 volatile uint32_t t_since_press = 0;
+volatile page_t pagestate = 0;
 
-char Texte[20];
+static uint32_t blink_rgb;
+static uint32_t blink_ms;
+static uint32_t buzz_period;
+static uint8_t  ledstate = 0;
+static uint8_t  error = 0;
+static uint8_t  buzzstate = 0;
+static cayenne_lpp_t lpp;   // statique : buffer de 51 octets, pas sur la pile
+
+char lcd_text[20];
+char lcd_error_text_up[20];
+char lcd_error_text_down[20];
 
 float sensor_temp = 0;
 
 uint16_t sensor_lux = 0;
 
-volatile page_t pagestate = 0;
-
-static osjob_t  blinkjob;
-static uint32_t blink_rgb;
-static uint32_t blink_ms;
-static uint8_t  ledstate;
-
+RGBLCD1602_t Ecran_I2C; //creation de l'objet
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+/* USER CODE BEGIN PFP */
 static void backlight_cmd(uint32_t rgb, uint8_t cmd);
+static void buzz_two_tone_cmd(uint8_t cmd);
+static void blinkfunc(osjob_t *j);
+static void draw_lcd(uint8_t cursor_y, uint8_t buf_selector);
+static void clear_error(void);
+
+void buzzfunc(osjob_t *j);
+void buzz_start(uint32_t period_ms);
+void buzz_stop(void);
+void blink_start(uint32_t rgb, uint32_t period_ms);
+void blink_stop(void);
+void alarm_start(uint32_t rgb, uint32_t blink_period_ms, uint32_t buzz_period_ms, const char *alarm_msg);
+void alarm_stop(void);
+void lcd_manager(uint8_t page);
+/* USER CODE END PFP */
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -181,24 +203,6 @@ static u2_t adc_read_channel(uint32_t channel) {
 	return val;
 }
 
-static void blinkfunc(osjob_t *j) {
-	ledstate = !ledstate;
-	backlight_cmd(blink_rgb, ledstate);
-	os_setTimedCallback(j, os_getTime() + ms2osticks(blink_ms), blinkfunc);
-}
-
-void blink_start(uint32_t rgb, uint32_t period_ms) {
-	blink_rgb = rgb;
-	blink_ms  = period_ms;
-	ledstate  = 0;
-	blinkfunc(&blinkjob);
-}
-
-void blink_stop(void) {
-	os_clearCallback(&blinkjob);
-}
-
-
 void RGBLCD1602_ECRAN_start_com(RGBLCD1602_t *lcd, u1_t datarate, u4_t freq)
 {
 	char ligne[20];
@@ -217,6 +221,20 @@ void RGBLCD1602_ECRAN_start_com(RGBLCD1602_t *lcd, u1_t datarate, u4_t freq)
 	DFRobot_RGBLCD1602_print(lcd, ligne);
 }
 
+void set_tone_frequency(TIM_HandleTypeDef *htim, uint32_t channel, uint32_t freq_hz) {
+    if (freq_hz == 0) {
+        __HAL_TIM_SET_COMPARE(htim, channel, 0); // Silence
+        return;
+    }
+
+    // Calcul de la période : 1 000 000 / freq - 1
+    uint32_t arr = (1000000 / freq_hz) - 1;
+
+    // Mise à jour des registres
+    __HAL_TIM_SET_AUTORELOAD(htim, arr);
+    __HAL_TIM_SET_COMPARE(htim, channel, (arr + 1) / 2); // 50 % duty cycle
+}
+
 
 // provide application router ID (8 bytes, LSBF)
 void os_getArtEui(u1_t *buf) {
@@ -233,6 +251,68 @@ void os_getDevKey(u1_t *buf) {
 void initsensor() {
 
 }
+
+void buzzfunc(osjob_t *j) {
+	buzzstate = !buzzstate;
+	buzz_two_tone_cmd(buzzstate);
+	os_setTimedCallback(j, os_getTime() + ms2osticks(buzz_period), buzzfunc);
+}
+
+void alarm_start(uint32_t rgb, uint32_t blink_period_ms, uint32_t buzz_period_ms, const char *alarm_msg) {
+	error = 1;
+
+	blink_rgb = rgb;
+	blink_ms  = blink_period_ms;
+	buzz_period = buzz_period_ms;
+	ledstate  = 0;
+	buzzstate = 0;
+
+	if (alarm_msg != NULL) {
+			strncpy(lcd_error_text_down, alarm_msg, sizeof(lcd_error_text_down) - 1);
+			lcd_error_text_down[sizeof(lcd_error_text_down) - 1] = '\0';
+		} else {
+			//Fall Back si alarm_msg = NULL
+			snprintf(lcd_error_text_down, sizeof(lcd_error_text_down), "  ALARM ACTIVE");
+		}
+	lcd_manager(PAGE_ERROR);
+	blink_start(rgb, blink_period_ms);
+	buzz_start(buzz_period_ms);
+}
+
+void buzz_start(uint32_t period_ms) {
+	buzz_period = period_ms;
+	buzzstate = 0;
+	buzzfunc(&buzzjob);
+}
+
+void buzz_stop(void) {
+	os_clearCallback(&buzzjob);
+	set_tone_frequency(&htim2, TIM_CHANNEL_1, 0);
+}
+
+void alarm_stop(void) {
+	error = 0;
+	blink_stop();
+	buzz_stop();
+}
+
+static void blinkfunc(osjob_t *j) {
+	ledstate = !ledstate;
+	backlight_cmd(blink_rgb, ledstate);
+	os_setTimedCallback(j, os_getTime() + ms2osticks(blink_ms), blinkfunc);
+}
+
+void blink_start(uint32_t rgb, uint32_t period_ms) {
+	blink_rgb = rgb;
+	blink_ms  = period_ms;
+	ledstate  = 0;
+	blinkfunc(&blinkjob);
+}
+
+void blink_stop(void) {
+	os_clearCallback(&blinkjob);
+}
+
 
 void initfunc(osjob_t *j) {
 	// intialize sensor hardware
@@ -276,77 +356,125 @@ static void backlight_cmd(uint32_t rgb, uint8_t cmd) {
 	}
 }
 
-void lcd_manager(void) {   /* texte uniquement */
-	DFRobot_RGBLCD1602_clear(&Ecran_I2C);
-	switch (pagestate) {
-	case PAGE_1 :
-		// TOP
-		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
-		DFRobot_RGBLCD1602_print(&Ecran_I2C, "     PAGE 1  ");
-		// BOTTOM
-		snprintf(Texte, sizeof Texte, "Temp : %0.1f Deg", sensor_temp);
-		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 1);
-		DFRobot_RGBLCD1602_print(&Ecran_I2C, Texte);
+static void buzz_two_tone_cmd(uint8_t cmd) {
+	if (cmd) {
+		set_tone_frequency(&htim2, TIM_CHANNEL_1, 435);
+	} else {
+		set_tone_frequency(&htim2, TIM_CHANNEL_1, 651);
+	}
+}
+
+
+static void draw_lcd(uint8_t cursor_y, uint8_t buf_selector) {
+    char line_buf[17]; // 16 caractères + '\0'
+
+    // %-16.16s : tronque à 16 max et complète avec des espaces si plus court
+    if        (buf_selector == 1) {
+    	snprintf(line_buf, sizeof(line_buf), "%-16.16s", lcd_error_text_up);
+    } else if (buf_selector == 2) {
+    	snprintf(line_buf, sizeof(line_buf), "%-16.16s", lcd_error_text_down);
+    } else {
+    	snprintf(line_buf, sizeof(line_buf), "%-16.16s", lcd_text);
+    }
+
+    DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, SCREEN_CURSOR_ZERO, cursor_y);
+    DFRobot_RGBLCD1602_print(&Ecran_I2C, line_buf);
+}
+
+
+void lcd_manager(uint8_t page) {
+
+	if (error) {
+		page = PAGE_ERROR;
+	}
+
+	switch (page) {
+	case PAGE_1:
+		// Ligne 0 : Titre
+		snprintf(lcd_text, sizeof(lcd_text), "     PAGE 1  ");
+		draw_lcd(SCREEN_UP,NORMAL_BUF);
+
+		// Ligne 1 : Valeur
+		snprintf(lcd_text, sizeof(lcd_text), "Temp : %0.1f Deg", sensor_temp);
+		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
 		break;
 	case PAGE_2 :
 		// TOP
-		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
-		DFRobot_RGBLCD1602_print(&Ecran_I2C, "     PAGE 2  ");
+		snprintf(lcd_text, sizeof(lcd_text), "     PAGE 2  ");
+		draw_lcd(SCREEN_UP,NORMAL_BUF);
 		// BOTTOM
-		snprintf(Texte, sizeof Texte, "Lum  : %u lux", sensor_lux);
-		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 1);
-		DFRobot_RGBLCD1602_print(&Ecran_I2C, Texte);
+		snprintf(lcd_text, sizeof(lcd_text), "Lum  : %u lux", sensor_lux);
+		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
 		break;
 	case PAGE_3 :
 		// TOP
-		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
-		DFRobot_RGBLCD1602_print(&Ecran_I2C, "     PAGE 3  ");
+		snprintf(lcd_text, sizeof(lcd_text), "     PAGE 3  ");
+		draw_lcd(SCREEN_UP,NORMAL_BUF);
 		// BOTTOM
-		snprintf(Texte, sizeof Texte, "Lum  : %u lux", sensor_lux);
-		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 1);
-		DFRobot_RGBLCD1602_print(&Ecran_I2C, Texte);
+		snprintf(lcd_text, sizeof(lcd_text), "Lum  : %u lux", sensor_lux);
+		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
 		break;
 	case PAGE_4 :
 		// TOP
-		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
-		DFRobot_RGBLCD1602_print(&Ecran_I2C, "     PAGE 4  ");
+		snprintf(lcd_text, sizeof(lcd_text), "     PAGE 4  ");
+		draw_lcd(SCREEN_UP,NORMAL_BUF);
 		// BOTTOM
-		snprintf(Texte, sizeof Texte, "Lum  : %u lux", sensor_lux);
-		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 1);
-		DFRobot_RGBLCD1602_print(&Ecran_I2C, Texte);
+		snprintf(lcd_text, sizeof(lcd_text), "Lum  : %u lux", sensor_lux);
+		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
 		break;
 	case PAGE_5 :
 		// TOP
-		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
-		DFRobot_RGBLCD1602_print(&Ecran_I2C, "     PAGE 5  ");
+		snprintf(lcd_text, sizeof(lcd_text), "     PAGE 5  ");
+		draw_lcd(SCREEN_UP,NORMAL_BUF);
 		// BOTTOM
-		snprintf(Texte, sizeof Texte, "Lum  : %u lux", sensor_lux);
-		DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 1);
-		DFRobot_RGBLCD1602_print(&Ecran_I2C, Texte);
+		snprintf(lcd_text, sizeof(lcd_text), "Lum  : %u lux", sensor_lux);
+		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
+		break;
+	case PAGE_ERROR :
+		// TOP
+		snprintf(lcd_error_text_up, sizeof(lcd_error_text_up), "   PAGE ERREUR");
+		draw_lcd(SCREEN_UP,ERROR_BUF_UP);
+		// BOTTOM
+		//snprintf(lcd_error_text_down, sizeof(lcd_error_text_down), "     AUCUNE");
+		draw_lcd(SCREEN_DOWN,ERROR_BUF_DOWN);
+		break;
+	case PAGE_CLEARED :
+		// TOP
+		snprintf(lcd_text, sizeof(lcd_text), "     ERREUR");
+		draw_lcd(SCREEN_UP,NORMAL_BUF);
+		// BOTTOM
+		snprintf(lcd_text, sizeof(lcd_text), "     CLEARED");
+		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
 		break;
 	}
 
 }
 
 void lcdjobfunc(osjob_t *j) {   /* appui bouton, appelé via os_setCallback */
-	blink_stop();
+	alarm_stop();
 	if (eveil) {
 		pagestate ++;
-		if (pagestate > 4) {
+		if (pagestate > 5) {
 			pagestate = 0;
 		}
 	}
-
 	backlight_wake(LCD_COLOR_WHITE);
-	lcd_manager();
+	lcd_manager(pagestate);
 	debug_time();
 	debug_str("Change page cmd\r\n");
 }
 
 void longpressfunc(osjob_t *j) {   /* appui bouton, appelé via os_setCallback seulement */
-	blink_start(LCD_COLOR_RED, FIVE_Hz);
+	//alarm_start(LCD_COLOR_RED, FIVE_Hz, FIVE_Hz, "    TEST MODE");
+	clear_error();
+	backlight_wake(LCD_COLOR_WHITE);
 	debug_time();
 	debug_str("long press cmd\r\n");
+}
+
+static void clear_error(void) {
+	snprintf(lcd_error_text_down, sizeof(lcd_error_text_down), "     AUCUNE");
+	lcd_manager(PAGE_CLEARED);
 }
 
 // report sensor value every minute
@@ -372,7 +500,8 @@ static void reportfunc(osjob_t *j) {
 	// prepare and schedule data for transmission
 	LMIC_setTxData2(1, lpp.buffer, lpp.cursor, 0);            // port 1, 8 octets, unconfirmed
 
-	lcd_manager();
+	lcd_manager(pagestate);
+	os_setTimedCallback(&reportjob, os_getTime() + ms2osticks(5000), reportfunc); //200ms callback du job
 
 	// reschedule job in 15 seconds
 	//os_setTimedCallback(j, os_getTime() + sec2osticks(15), reportfunc);
@@ -394,7 +523,7 @@ void onEvent(ev_t ev) {
 		LMIC_setAdrMode(0);
 		LMIC_setLinkCheckMode(0);
 		backlight_wake(LCD_COLOR_WHITE);
-		lcd_manager();
+		lcd_manager(pagestate);
 		reportfunc(&reportjob);
 		break;
 	case EV_TXCOMPLETE:
@@ -408,7 +537,6 @@ void onEvent(ev_t ev) {
 		    debug_buf(LMIC.frame + LMIC.dataBeg, LMIC.dataLen);
 		    debug_char('\n');
 		}
-		os_setTimedCallback(&reportjob, os_getTime() + ms2osticks(200), reportfunc); //200ms callback du job
 		break;
 	case EV_JOIN_FAILED:
 	case EV_SCAN_TIMEOUT:
@@ -468,12 +596,15 @@ int main(void)
   MX_TIM16_Init();
   MX_I2C1_Init();
   MX_USART2_UART_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
 	HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
 
 	//HAL_GPIO_WritePin(ALIM_TEMP_GPIO_Port, ALIM_TEMP_Pin, 1);
 
 	HAL_TIM_Base_Start_IT(&htim16);   // <----------- change to your setup
+
+	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
 
 	__HAL_SPI_ENABLE(&hspi3);        // <----------- change to your setup
 
@@ -490,9 +621,8 @@ int main(void)
 
 	os_setCallback(&initjob, initfunc);
 	// execute scheduled jobs and events
-	DFRobot_RGBLCD1602_clear(&Ecran_I2C);
-	DFRobot_RGBLCD1602_setCursor(&Ecran_I2C, 0, 0);
-	DFRobot_RGBLCD1602_print(&Ecran_I2C, "LoRaWAN JOINING");
+
+	snprintf(lcd_error_text_down, sizeof(lcd_error_text_down), "  ALARM ACTIVE");
 
 	os_runloop();
 	// (not reached)
