@@ -57,12 +57,23 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define MAG_SW_Pin GPIO_PIN_0
+#define MAG_SW_GPIO_Port GPIOA
+#define RELAY1_Pin GPIO_PIN_1
+#define RELAY1_GPIO_Port GPIOA
 #define TEMP_Pin GPIO_PIN_4
 #define TEMP_GPIO_Port GPIOA
 #define BUZZER_Pin GPIO_PIN_5
 #define BUZZER_GPIO_Port GPIOA
+#define RELAY2_Pin GPIO_PIN_7
+#define RELAY2_GPIO_Port GPIOA
 #define LUX_Pin GPIO_PIN_0
 #define LUX_GPIO_Port GPIOB
+#define FLAME_SNSR_Pin GPIO_PIN_1
+#define FLAME_SNSR_GPIO_Port GPIOB
+#define PIR_Pin GPIO_PIN_8
+#define PIR_GPIO_Port GPIOA
+#define PIR_EXTI_IRQn EXTI9_5_IRQn
 #define RST_Pin GPIO_PIN_11
 #define RST_GPIO_Port GPIOA
 #define BPJaune_Pin GPIO_PIN_12
@@ -79,13 +90,21 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN Private defines */
 
-extern osjob_t lcdjob;
+extern osjob_t shortpressjob;
 
 extern osjob_t longpressjob;
 
-void lcdjobfunc(osjob_t *j);
+extern osjob_t pir_on_job;
+
+extern osjob_t pir_off_job;
+
+void shortpressfunc(osjob_t *j);
 
 void longpressfunc(osjob_t *j);
+
+void pir_on_func(osjob_t *j);
+
+void pir_off_func(osjob_t *j);
 
 /* USER CODE END Private defines */
 

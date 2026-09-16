@@ -50,6 +50,10 @@ typedef enum {
 	PAGE_3,
 	PAGE_4,
 	PAGE_5,
+	PAGE_6,
+	PAGE_7,
+	PAGE_8,
+	PAGE_9,
 	PAGE_ERROR,
 	PAGE_CLEARED
 } page_t;
@@ -65,7 +69,9 @@ typedef enum {
 #define PT550_UA_PER_LUX     0.90f       /* à recaler avec un luxmètre */
 #define DFR0026_MV_PER_LUX   (DFR0026_R_LOAD_OHM * PT550_UA_PER_LUX / 1000.0f)
 
-#define Temps_eveille 5
+#define WAKE_UP_TIME 10
+
+#define LIGHT_HOLD_TIME 30
 
 #define ONE_Hz 1000
 #define TWO_Hz 500
@@ -79,6 +85,21 @@ typedef enum {
 #define NORMAL_BUF 0
 #define ERROR_BUF_UP 1
 #define ERROR_BUF_DOWN 2
+
+#define ON 1
+#define OFF 0
+
+#define MAX_TEMP 45.0f
+#define FAN_THR_ON 30
+#define FAN_THR_OFF 28
+
+#define FLAME_TH_ON      2000
+#define FLAME_TH_OFF     1500
+#define FLAME_CONFIRM_N  3
+
+#define LM35_MV_PER_DEG 10.0f
+
+#define SEUIL_LUMI 2000
 
 /* USER CODE END PD */
 
@@ -98,13 +119,16 @@ static const u1_t DEVKEY[16] = { 0xA1, 0x99, 0x31, 0x2B, 0xF2, 0xD4, 0x43, 0x61,
 		0x56, 0x08, 0xBC, 0x1F, 0x51, 0x1B, 0xEA, 0x2F };// device-specific AES key (MSBF)
 
 
-static osjob_t  blinkjob;
+static osjob_t blinkjob;
 static osjob_t backlightjob;
+static osjob_t lightjob;
 static osjob_t reportjob;
 
-osjob_t lcdjob;
+osjob_t shortpressjob;
 osjob_t longpressjob;
 osjob_t buzzjob;
+osjob_t pir_on_job;
+osjob_t pir_off_job;
 
 volatile uint8_t eveil = 1;
 volatile uint32_t t_since_press = 0;
@@ -116,6 +140,8 @@ static uint32_t buzz_period;
 static uint8_t  ledstate = 0;
 static uint8_t  error = 0;
 static uint8_t  buzzstate = 0;
+static uint8_t flame_detected = 0;
+static uint8_t flame_cnt = 0;
 static cayenne_lpp_t lpp;   // statique : buffer de 51 octets, pas sur la pile
 
 char lcd_text[20];
@@ -125,6 +151,11 @@ char lcd_error_text_down[20];
 float sensor_temp = 0;
 
 uint16_t sensor_lux = 0;
+uint16_t m_sw = 0;
+uint16_t pir_state = 0;
+uint16_t relay1_state = 0;
+uint16_t relay2_state = 0;
+uint16_t error_cnt = 0;
 
 RGBLCD1602_t Ecran_I2C; //creation de l'objet
 
@@ -134,11 +165,16 @@ RGBLCD1602_t Ecran_I2C; //creation de l'objet
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 /* USER CODE BEGIN PFP */
+static const char *timesinceboot(void);
 static void backlight_cmd(uint32_t rgb, uint8_t cmd);
 static void buzz_two_tone_cmd(uint8_t cmd);
 static void blinkfunc(osjob_t *j);
 static void draw_lcd(uint8_t cursor_y, uint8_t buf_selector);
 static void clear_error(void);
+static void change_page(void);
+static void check_for_error(void);
+static void relay1_cmd(uint8_t cmd);
+static void relay2_cmd(uint8_t cmd);
 
 void buzzfunc(osjob_t *j);
 void buzz_start(uint32_t period_ms);
@@ -148,7 +184,6 @@ void blink_stop(void);
 void alarm_start(uint32_t rgb, uint32_t blink_period_ms, uint32_t buzz_period_ms, const char *alarm_msg);
 void alarm_stop(void);
 void lcd_manager(uint8_t page);
-/* USER CODE END PFP */
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -170,12 +205,25 @@ float lm94021_adc_to_tempC(u2_t adc) {
     return x + 30.0f;                    // T = x + 30
 }
 
-
 float LM35_GetTemperature(u2_t adc)
 {
-    return (330.0f * adc) / 4095.0f;
+    float v_mv = (float)adc * VREF_MV / ADC_MAX;
+    return v_mv / LM35_MV_PER_DEG;
 }
 
+static void flame_update(u2_t raw) {
+    u2_t th = flame_detected ? FLAME_TH_OFF : FLAME_TH_ON;
+    uint8_t cond = flame_detected ? (raw < th) : (raw > th);
+
+    if (cond) {
+        if (++flame_cnt >= FLAME_CONFIRM_N) {
+            flame_detected = !flame_detected;
+            flame_cnt = 0;
+        }
+    } else {
+        flame_cnt = 0;
+    }
+}
 
 uint16_t dfr0026_adc_to_lux(u2_t adc) {
     float v_mv = (float)adc * VREF_MV / ADC_MAX;
@@ -213,10 +261,7 @@ void RGBLCD1602_ECRAN_start_com(RGBLCD1602_t *lcd, u1_t datarate, u4_t freq)
 	DFRobot_RGBLCD1602_print(lcd, "Connexion LoRa...");
 
 	/* ex : "SF7   868.1 MHz" */
-	snprintf(ligne, sizeof ligne, "SF%-2u-> %lu.%lu MHz",
-	         (unsigned)(12 - datarate),
-	         (unsigned long)(freq / 1000000),
-	         (unsigned long)((freq / 100000) % 10));
+	snprintf(ligne, sizeof ligne, "SF%-2u-> %lu.%lu MHz", (unsigned)(12 - datarate), (unsigned long)(freq / 1000000),(unsigned long)((freq / 100000) % 10));
 	DFRobot_RGBLCD1602_setCursor(lcd, 0, 1);
 	DFRobot_RGBLCD1602_print(lcd, ligne);
 }
@@ -271,9 +316,10 @@ void alarm_start(uint32_t rgb, uint32_t blink_period_ms, uint32_t buzz_period_ms
 			strncpy(lcd_error_text_down, alarm_msg, sizeof(lcd_error_text_down) - 1);
 			lcd_error_text_down[sizeof(lcd_error_text_down) - 1] = '\0';
 		} else {
-			//Fall Back si alarm_msg = NULL
+			//Fall back si alarm_msg = NULL
 			snprintf(lcd_error_text_down, sizeof(lcd_error_text_down), "  ALARM ACTIVE");
 		}
+
 	lcd_manager(PAGE_ERROR);
 	blink_start(rgb, blink_period_ms);
 	buzz_start(buzz_period_ms);
@@ -325,16 +371,34 @@ void initfunc(osjob_t *j) {
 	LMIC_setDrTxpow(DR_SF7, 20);
 }
 u2_t readsensor_temp() {
-	//HAL_GPIO_WritePin(ALIM_TEMP_GPIO_Port, ALIM_TEMP_Pin, 1);
-	//HAL_Delay(10);
-	u2_t temp_val = adc_read_channel(ADC_CHANNEL_9);				///
-	//HAL_GPIO_WritePin(ALIM_TEMP_GPIO_Port, ALIM_TEMP_Pin, 0);
+	u2_t temp_val = adc_read_channel(ADC_CHANNEL_9);
 	return temp_val;
 }
 
 u2_t readsensor_lux() {
 	u2_t lux_val = adc_read_channel(ADC_CHANNEL_15);
 	return lux_val;
+}
+
+u2_t readsensor_flame() {
+	u2_t flame_val = adc_read_channel(ADC_CHANNEL_16);
+	return flame_val;
+}
+
+u1_t  readsensor_mag_sw() {
+	u1_t mag_sw_val = HAL_GPIO_ReadPin(MAG_SW_GPIO_Port, MAG_SW_Pin);
+	return mag_sw_val;
+}
+
+static void lightoff(osjob_t *j) {
+	relay2_state = 0;
+	relay2_cmd(relay2_state);
+}
+
+static void light_wake(void) {
+	relay2_state = 1;
+	relay2_cmd(relay2_state);
+	os_setTimedCallback(&lightjob, os_getTime() + sec2osticks(LIGHT_HOLD_TIME), lightoff);
 }
 
 static void backlightoff(osjob_t *j) {
@@ -345,7 +409,7 @@ static void backlightoff(osjob_t *j) {
 static void backlight_wake(uint32_t rgb) {
 	eveil = 1;
 	RGBLCD1602_setColor(&Ecran_I2C, rgb);
-	os_setTimedCallback(&backlightjob, os_getTime() + sec2osticks(Temps_eveille), backlightoff);
+	os_setTimedCallback(&backlightjob, os_getTime() + sec2osticks(WAKE_UP_TIME), backlightoff);
 }
 
 static void backlight_cmd(uint32_t rgb, uint8_t cmd) {
@@ -391,48 +455,80 @@ void lcd_manager(uint8_t page) {
 	switch (page) {
 	case PAGE_1:
 		// Ligne 0 : Titre
-		snprintf(lcd_text, sizeof(lcd_text), "     PAGE 1  ");
+		snprintf(lcd_text, sizeof(lcd_text), "     DATA 1  ");
 		draw_lcd(SCREEN_UP,NORMAL_BUF);
 
 		// Ligne 1 : Valeur
-		snprintf(lcd_text, sizeof(lcd_text), "Temp : %0.1f Deg", sensor_temp);
+		snprintf(lcd_text, sizeof(lcd_text), "TEMP : %0.1f Deg", sensor_temp);
 		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
 		break;
 	case PAGE_2 :
 		// TOP
-		snprintf(lcd_text, sizeof(lcd_text), "     PAGE 2  ");
+		snprintf(lcd_text, sizeof(lcd_text), "     DATA 2  ");
 		draw_lcd(SCREEN_UP,NORMAL_BUF);
 		// BOTTOM
-		snprintf(lcd_text, sizeof(lcd_text), "Lum  : %u lux", sensor_lux);
+		snprintf(lcd_text, sizeof(lcd_text), "LUM  : %u lux", sensor_lux);
 		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
 		break;
 	case PAGE_3 :
 		// TOP
-		snprintf(lcd_text, sizeof(lcd_text), "     PAGE 3  ");
+		snprintf(lcd_text, sizeof(lcd_text), "     DATA 3  ");
 		draw_lcd(SCREEN_UP,NORMAL_BUF);
 		// BOTTOM
-		snprintf(lcd_text, sizeof(lcd_text), "Lum  : %u lux", sensor_lux);
+		snprintf(lcd_text, sizeof(lcd_text), "FEUX : %s", flame_cnt >= 1 ? "DANGER" : "AUCUN");
 		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
 		break;
 	case PAGE_4 :
 		// TOP
-		snprintf(lcd_text, sizeof(lcd_text), "     PAGE 4  ");
+		snprintf(lcd_text, sizeof(lcd_text), "     DATA 4  ");
 		draw_lcd(SCREEN_UP,NORMAL_BUF);
 		// BOTTOM
-		snprintf(lcd_text, sizeof(lcd_text), "Lum  : %u lux", sensor_lux);
+		snprintf(lcd_text, sizeof(lcd_text), "PORTE : %s", m_sw ? "FERMER" : "OUVERTE");
 		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
 		break;
 	case PAGE_5 :
 		// TOP
-		snprintf(lcd_text, sizeof(lcd_text), "     PAGE 5  ");
+		snprintf(lcd_text, sizeof(lcd_text), "     DATA 5  ");
 		draw_lcd(SCREEN_UP,NORMAL_BUF);
 		// BOTTOM
-		snprintf(lcd_text, sizeof(lcd_text), "Lum  : %u lux", sensor_lux);
+		snprintf(lcd_text, sizeof(lcd_text), "MOUVEMENT : %s", pir_state ? "OUI" : "NON");
+		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
+		break;
+	case PAGE_6 :
+		// TOP
+		snprintf(lcd_text, sizeof(lcd_text), "     DATA 6  ");
+		draw_lcd(SCREEN_UP,NORMAL_BUF);
+		// BOTTOM
+		snprintf(lcd_text, sizeof(lcd_text), "RELAIS 1 : %s", relay1_state ? "ON" : "OFF");
+		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
+		break;
+	case PAGE_7 :
+		// TOP
+		snprintf(lcd_text, sizeof(lcd_text), "     DATA 7  ");
+		draw_lcd(SCREEN_UP,NORMAL_BUF);
+		// BOTTOM
+		snprintf(lcd_text, sizeof(lcd_text), "RELAIS 2 : %s",  relay2_state ? "ON" : "OFF");
+		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
+		break;
+	case PAGE_8 :
+		// TOP
+		snprintf(lcd_text, sizeof(lcd_text), "     DATA 8  ");
+		draw_lcd(SCREEN_UP,NORMAL_BUF);
+		// BOTTOM
+		snprintf(lcd_text, sizeof lcd_text, "SF%-2u-> %lu.%lu MHz", (unsigned)(12 - LMIC.datarate), (unsigned long)(LMIC.freq / 1000000),(unsigned long)((LMIC.freq / 100000) % 10));
+		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
+		break;
+	case PAGE_9 :
+		// TOP
+		snprintf(lcd_text, sizeof(lcd_text), "     DATA 9  ");
+		draw_lcd(SCREEN_UP,NORMAL_BUF);
+		// BOTTOM
+		snprintf(lcd_text, sizeof(lcd_text), "UP-TIME %s", timesinceboot());
 		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
 		break;
 	case PAGE_ERROR :
 		// TOP
-		snprintf(lcd_error_text_up, sizeof(lcd_error_text_up), "   PAGE ERREUR");
+		snprintf(lcd_error_text_up, sizeof(lcd_error_text_up), "   ERREUR : %02d", error_cnt);
 		draw_lcd(SCREEN_UP,ERROR_BUF_UP);
 		// BOTTOM
 		//snprintf(lcd_error_text_down, sizeof(lcd_error_text_down), "     AUCUNE");
@@ -440,44 +536,142 @@ void lcd_manager(uint8_t page) {
 		break;
 	case PAGE_CLEARED :
 		// TOP
-		snprintf(lcd_text, sizeof(lcd_text), "     ERREUR");
+		snprintf(lcd_text, sizeof(lcd_text), " ERREUR CLEARED ");
 		draw_lcd(SCREEN_UP,NORMAL_BUF);
 		// BOTTOM
-		snprintf(lcd_text, sizeof(lcd_text), "     CLEARED");
+		snprintf(lcd_text, sizeof(lcd_text), " ");
 		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
 		break;
 	}
 
 }
 
-void lcdjobfunc(osjob_t *j) {   /* appui bouton, appelé via os_setCallback */
+void shortpressfunc(osjob_t *j) {   /* appui bouton court, appelé via os_setCallback */
 	alarm_stop();
-	if (eveil) {
-		pagestate ++;
-		if (pagestate > 5) {
-			pagestate = 0;
-		}
-	}
+	change_page();
 	backlight_wake(LCD_COLOR_WHITE);
 	lcd_manager(pagestate);
 	debug_time();
 	debug_str("Change page cmd\r\n");
 }
 
-void longpressfunc(osjob_t *j) {   /* appui bouton, appelé via os_setCallback seulement */
+void longpressfunc(osjob_t *j) {   /* appui bouton long, appelé via os_setCallback seulement */
 	//alarm_start(LCD_COLOR_RED, FIVE_Hz, FIVE_Hz, "    TEST MODE");
-	clear_error();
 	backlight_wake(LCD_COLOR_WHITE);
+	switch(pagestate) {
+	case PAGE_1 : break;
+	case PAGE_2 : break;
+	case PAGE_3 : break;
+	case PAGE_4 : break;
+	case PAGE_5 : break;
+	case PAGE_6 :
+		relay1_state = !relay1_state;
+		relay1_cmd(relay1_state);
+		break;
+	case PAGE_7 :
+		relay2_state = !relay2_state;
+		relay2_cmd(relay2_state);
+		break;
+	case PAGE_ERROR :
+		clear_error();
+		backlight_wake(LCD_COLOR_WHITE);
+		break;
+	default : break;
+
+	}
+
 	debug_time();
 	debug_str("long press cmd\r\n");
 }
 
+void pir_on_func(osjob_t *j) {   /* declanchement on pir, appelé via os_setCallback seulement */
+	pir_state = 1;
+	debug_time();
+	debug_str("PIR on cmd\r\n");
+}
+
+void pir_off_func(osjob_t *j) {   /* declanchement off pir, appelé via os_setCallback seulement */
+	pir_state = 0;
+	debug_time();
+	debug_str("PIR off cmd\r\n");
+}
+
 static void clear_error(void) {
-	snprintf(lcd_error_text_down, sizeof(lcd_error_text_down), "     AUCUNE");
+	error_cnt = 0;
+	flame_cnt = 0;
+	snprintf(lcd_error_text_down, sizeof(lcd_error_text_down), " ");
+	alarm_stop();
 	lcd_manager(PAGE_CLEARED);
 }
 
-// report sensor value every minute
+static void change_page(void) {
+	if (eveil) {
+
+		pagestate ++;
+
+		if (pagestate > PAGE_ERROR) {
+			pagestate = 0;
+		}
+	}
+}
+
+static void relay1_cmd(uint8_t cmd) {
+	HAL_GPIO_WritePin(RELAY1_GPIO_Port, RELAY1_Pin, cmd);
+}
+
+static void relay2_cmd(uint8_t cmd) {
+	HAL_GPIO_WritePin(RELAY2_GPIO_Port, RELAY2_Pin, cmd);
+}
+
+static void check_for_error(void) {
+	if (sensor_temp > MAX_TEMP) {
+		error_cnt ++;
+		alarm_start(LCD_COLOR_RED, FIVE_Hz, FIVE_Hz, "     TEMP HIGH");
+	}
+
+	if (!m_sw && sensor_lux > SEUIL_LUMI) {
+		error_cnt ++;
+		alarm_start(LCD_COLOR_RED, FIVE_Hz, FIVE_Hz, "LUMIERE DETECTER");
+	}
+
+	if (flame_cnt >= 1){
+		error_cnt ++;
+		alarm_start(LCD_COLOR_RED, FIVE_Hz, FIVE_Hz, "    INCENDIE");
+	}
+}
+
+static void relay_automation(void){
+	//declanchement ventilation
+	static uint8_t flag;
+	if (sensor_temp > FAN_THR_ON) {
+		relay1_state = ON;
+		relay1_cmd(relay1_state);
+		flag = 1;
+	} else if(flag && sensor_temp <= FAN_THR_OFF){
+		relay1_state = OFF;
+		relay1_cmd(relay1_state);
+		flag = 0;
+	}
+
+	//declanchement lumiere
+	if (pir_state) {
+		light_wake();
+	}
+}
+
+static const char *timesinceboot(void) {
+	static char buf[12];                       /* "hhh:mm:ss" + '\0' */
+	u4_t total_sec = osticks2ms(os_getTime()) / 1000;
+	u4_t h = total_sec / 3600;
+	u4_t m = (total_sec / 60) % 60;
+	u4_t s = total_sec % 60;
+
+	snprintf(buf, sizeof(buf), "%02lu:%02lu:%02lu",
+	         (unsigned long)h, (unsigned long)m, (unsigned long)s);
+	return buf;
+}
+
+// report sensor value every 5sec
 static void reportfunc(osjob_t *j) {
 	// read sensor temp
 	u2_t temp_val = readsensor_temp();
@@ -493,6 +687,20 @@ static void reportfunc(osjob_t *j) {
 	debug_valdec("Onboard sensor lux -> ", sensor_lux);
 	debug_str(" lux \r\n");
 
+	// read sensor flame
+	u2_t flame_val = readsensor_flame();
+	flame_update(flame_val);
+	debug_time();
+	debug_valdec("Onboard sensor flame -> ", flame_cnt);
+	debug_str("\r\n");
+
+	// read sensor magnetic sw
+	u1_t mag_sw_state = readsensor_mag_sw();
+	m_sw = mag_sw_state;
+	debug_time();
+	debug_valdec("Onboard sensor mag sw -> ", m_sw);
+	debug_str("\r\n");
+
 	// encodage Cayenne LPP
 	cayenne_lpp_reset(&lpp);
 	cayenne_lpp_add_temperature(&lpp, 1, sensor_temp);        // canal 1 : 0.1 °C
@@ -501,7 +709,9 @@ static void reportfunc(osjob_t *j) {
 	LMIC_setTxData2(1, lpp.buffer, lpp.cursor, 0);            // port 1, 8 octets, unconfirmed
 
 	lcd_manager(pagestate);
-	os_setTimedCallback(&reportjob, os_getTime() + ms2osticks(5000), reportfunc); //200ms callback du job
+	check_for_error();
+	relay_automation();
+	os_setTimedCallback(&reportjob, os_getTime() + sec2osticks(6), reportfunc); //6s callback du job
 
 	// reschedule job in 15 seconds
 	//os_setTimedCallback(j, os_getTime() + sec2osticks(15), reportfunc);
@@ -621,8 +831,6 @@ int main(void)
 
 	os_setCallback(&initjob, initfunc);
 	// execute scheduled jobs and events
-
-	snprintf(lcd_error_text_down, sizeof(lcd_error_text_down), "  ALARM ACTIVE");
 
 	os_runloop();
 	// (not reached)

@@ -44,7 +44,8 @@
 #define mySPI hspi3     //  <--------- change to your setup
 
 #define BTN_DEBOUNCE_MS   30
-#define BTN_LONG_MS       2000
+#define BTN_LONG_MS       3000
+#define PIR_WARMUP_S  60
 
 static ostime_t press_t0    = 0;    /* date du dernier appui */
 static ostime_t last_edge   = 0;    /* date du dernier front accepté */
@@ -111,27 +112,41 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin_int){
     if(GPIO_Pin_int == DIO0_Pin) radio_irq_handler(0);
     if(GPIO_Pin_int == DIO1_Pin) radio_irq_handler(1);
 
-    /* hal.c — dans HAL_GPIO_EXTI_Callback */
-        if(GPIO_Pin_int == BPJaune_Pin){
-            if (LMIC.opmode & OP_JOINING) return;
+    if(GPIO_Pin_int == PIR_Pin){
+/*
+    	if (os_getTime() < sec2osticks(PIR_WARMUP_S)) return;
 
-            ostime_t now = os_getTime();
-            if(now - last_edge < ms2osticks(BTN_DEBOUNCE_MS)) return;   /* rebond */
-            last_edge = now;
+		if (LMIC.opmode & OP_JOINING) return;
 
-            if(HAL_GPIO_ReadPin(BPJaune_GPIO_Port, BPJaune_Pin) == GPIO_PIN_SET) {
-                /* ---- appui ---- */
-                press_t0 = now;
-                os_setTimedCallback(&longpressjob, now + ms2osticks(BTN_LONG_MS), longpressfunc);
-            } else {
-                /* ---- relâchement ---- */
-                if(now - press_t0 < ms2osticks(BTN_LONG_MS)) {
-                    os_clearCallback(&longpressjob);          /* pas encore tiré → appui court */
-                    os_setCallback(&lcdjob, lcdjobfunc);
-                }
+		if(HAL_GPIO_ReadPin(PIR_GPIO_Port, PIR_Pin) == GPIO_PIN_SET) {
+			// ---- appui ----
+			os_setCallback(&pir_on_job, pir_on_func);
+		} else {
+			// ---- relâchement ----
+			os_setCallback(&pir_off_job, pir_off_func);
+		}
+		*/
+	}
 
-            }
-        }
+	if(GPIO_Pin_int == BPJaune_Pin){
+		if (LMIC.opmode & OP_JOINING) return;
+
+		ostime_t now = os_getTime();
+		if(now - last_edge < ms2osticks(BTN_DEBOUNCE_MS)) return;   /* rebond */
+		last_edge = now;
+
+		if(HAL_GPIO_ReadPin(BPJaune_GPIO_Port, BPJaune_Pin) == GPIO_PIN_SET) {
+			/* ---- appui ---- */
+			press_t0 = now;
+			os_setTimedCallback(&longpressjob, now + ms2osticks(BTN_LONG_MS), longpressfunc);
+		} else {
+			/* ---- relâchement ---- */
+			if(now - press_t0 < ms2osticks(BTN_LONG_MS)) {
+				os_clearCallback(&longpressjob);          /* pas encore tiré → appui court */
+				os_setCallback(&shortpressjob, shortpressfunc);
+			}
+		}
+	}
 }
 
 // -----------------------------------------------------------------------------
