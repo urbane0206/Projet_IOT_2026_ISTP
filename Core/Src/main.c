@@ -57,6 +57,12 @@ typedef enum {
 	PAGE_ERROR,
 	PAGE_CLEARED
 } page_t;
+
+typedef enum {
+	AUTO,
+	OVERRIDE_ON,
+	OVERRIDE_OFF
+} rly_mode_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -99,7 +105,7 @@ typedef enum {
 
 #define LM35_MV_PER_DEG 10.0f
 
-#define SEUIL_LUMI 3000
+#define SEUIL_LUMI 1000
 
 /* USER CODE END PD */
 
@@ -117,12 +123,13 @@ static const u1_t APPEUI[8] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }
 static const u1_t DEVEUI[8] = { 0x4C, 0x8F, 0x07, 0xD0, 0x7E, 0xD5, 0xB3, 0x70 };// unique device ID (LSBF)
 static const u1_t DEVKEY[16] = { 0xA1, 0x99, 0x31, 0x2B, 0xF2, 0xD4, 0x43, 0x61,
 		0x56, 0x08, 0xBC, 0x1F, 0x51, 0x1B, 0xEA, 0x2F };// device-specific AES key (MSBF)
-
+static const char *rly_mode_str[] = { "AUTO", "OVR ON", "OVR OFF" };
 
 static osjob_t blinkjob;
 static osjob_t backlightjob;
 static osjob_t lightjob;
 static osjob_t reportjob;
+static osjob_t uptimejob;
 
 osjob_t shortpressjob;
 osjob_t longpressjob;
@@ -142,6 +149,10 @@ static uint8_t  error = 0;
 static uint8_t  buzzstate = 0;
 static uint8_t flame_detected = 0;
 static uint8_t flame_cnt = 0;
+static uint8_t relay1_state = 0;
+static uint8_t relay2_state = 0;
+static rly_mode_t relay1_mode = 0;
+static rly_mode_t relay2_mode = 0;
 static cayenne_lpp_t lpp;   // statique : buffer de 51 octets, pas sur la pile
 
 char lcd_text[20];
@@ -153,8 +164,6 @@ float sensor_temp = 0;
 uint16_t sensor_lux = 0;
 uint16_t m_sw = 0;
 uint16_t pir_state = 0;
-uint16_t relay1_state = 0;
-uint16_t relay2_state = 0;
 uint16_t error_cnt = 0;
 
 RGBLCD1602_t Ecran_I2C; //creation de l'objet
@@ -169,12 +178,14 @@ static const char *timesinceboot(void);
 static void backlight_cmd(uint32_t rgb, uint8_t cmd);
 static void buzz_two_tone_cmd(uint8_t cmd);
 static void blinkfunc(osjob_t *j);
+static void uptimefunc(osjob_t *j);
 static void draw_lcd(uint8_t cursor_y, uint8_t buf_selector);
 static void clear_error(void);
 static void change_page(void);
 static void check_for_error(void);
 static void relay1_cmd(uint8_t cmd);
 static void relay2_cmd(uint8_t cmd);
+static void relay_mode_selector(void);
 
 void buzzfunc(osjob_t *j);
 void buzz_start(uint32_t period_ms);
@@ -301,6 +312,12 @@ void buzzfunc(osjob_t *j) {
 	buzzstate = !buzzstate;
 	buzz_two_tone_cmd(buzzstate);
 	os_setTimedCallback(j, os_getTime() + ms2osticks(buzz_period), buzzfunc);
+}
+
+static void uptimefunc(osjob_t *j) {
+	if (pagestate == PAGE_9) {
+		lcd_manager(pagestate);   // réarme le job
+	}
 }
 
 void alarm_start(uint32_t rgb, uint32_t blink_period_ms, uint32_t buzz_period_ms, const char *alarm_msg) {
@@ -499,7 +516,7 @@ void lcd_manager(uint8_t page) {
 		snprintf(lcd_text, sizeof(lcd_text), "     DATA 6  ");
 		draw_lcd(SCREEN_UP,NORMAL_BUF);
 		// BOTTOM
-		snprintf(lcd_text, sizeof(lcd_text), "RELAIS 1 : %s", relay1_state ? "ON" : "OFF");
+		snprintf(lcd_text, sizeof(lcd_text), "RELAIS 1:%s", rly_mode_str[relay1_mode]);
 		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
 		break;
 	case PAGE_7 :
@@ -507,7 +524,7 @@ void lcd_manager(uint8_t page) {
 		snprintf(lcd_text, sizeof(lcd_text), "     DATA 7  ");
 		draw_lcd(SCREEN_UP,NORMAL_BUF);
 		// BOTTOM
-		snprintf(lcd_text, sizeof(lcd_text), "RELAIS 2 : %s",  relay2_state ? "ON" : "OFF");
+		snprintf(lcd_text, sizeof(lcd_text), "RELAIS 2:%s", rly_mode_str[relay2_mode]);
 		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
 		break;
 	case PAGE_8 :
@@ -525,6 +542,7 @@ void lcd_manager(uint8_t page) {
 		// BOTTOM
 		snprintf(lcd_text, sizeof(lcd_text), "UP-TIME %s", timesinceboot());
 		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
+		os_setTimedCallback(&uptimejob, os_getTime() + sec2osticks(1), uptimefunc);
 		break;
 	case PAGE_ERROR :
 		// TOP
@@ -565,13 +583,17 @@ void longpressfunc(osjob_t *j) {   /* appui bouton long, appelé via os_setCallb
 	case PAGE_4 : break;
 	case PAGE_5 : break;
 	case PAGE_6 :
-		relay1_state = !relay1_state;
-		relay1_cmd(relay1_state);
+		relay1_mode = (rly_mode_t)((relay1_mode + 1) % 3);
+		relay_mode_selector();
+		lcd_manager(pagestate);
 		break;
 	case PAGE_7 :
-		relay2_state = !relay2_state;
-		relay2_cmd(relay2_state);
+		relay2_mode = (rly_mode_t)((relay2_mode + 1) % 3);
+		relay_mode_selector();
+		lcd_manager(pagestate);
 		break;
+	case PAGE_8 : break;
+	case PAGE_9 : break;
 	case PAGE_ERROR :
 		clear_error();
 		backlight_wake(LCD_COLOR_WHITE);
@@ -636,28 +658,52 @@ static void check_for_error(void) {
 
 	if (flame_cnt >= 1){
 		error_cnt ++;
-		alarm_start(LCD_COLOR_RED, FIVE_Hz, FIVE_Hz, "    INCENDIE");
+		alarm_start(LCD_COLOR_RED, FIVE_Hz, TEN_Hz, "    INCENDIE");
 	}
 }
 
-static void relay_automation(void){
+static void relay1_automation(void){
 	//declanchement ventilation
-	static uint8_t flag;
 	if (sensor_temp > FAN_THR_ON) {
 		relay1_state = ON;
 		relay1_cmd(relay1_state);
-		flag = 1;
-	} else if(flag && sensor_temp <= FAN_THR_OFF){
+	} else if(sensor_temp <= FAN_THR_OFF){
 		relay1_state = OFF;
 		relay1_cmd(relay1_state);
-		flag = 0;
 	}
+}
 
+static void relay2_automation(void){
 	//declanchement lumiere
 	if (pir_state) {
 		light_wake();
 	}
 }
+
+static void relay_mode_selector(void) {
+	if (relay1_mode == AUTO) {
+		relay1_automation();
+	} else if (relay1_mode == OVERRIDE_ON) {
+		relay1_state = ON;
+		relay1_cmd(relay1_state);
+	} else if (relay1_mode == OVERRIDE_OFF) {
+		relay1_state = OFF;
+		relay1_cmd(relay1_state);
+	}
+
+	if (relay2_mode == AUTO) {
+		relay2_automation();
+	} else if (relay2_mode == OVERRIDE_ON) {
+		os_clearCallback(&lightjob);
+		relay2_state = ON;
+		relay2_cmd(relay2_state);
+	} else if (relay2_mode == OVERRIDE_OFF) {
+		os_clearCallback(&lightjob);
+		relay2_state = OFF;
+		relay2_cmd(relay2_state);
+	}
+}
+
 
 static const char *timesinceboot(void) {
 	static char buf[12];                       /* "hhh:mm:ss" + '\0' */
@@ -666,8 +712,7 @@ static const char *timesinceboot(void) {
 	u4_t m = (total_sec / 60) % 60;
 	u4_t s = total_sec % 60;
 
-	snprintf(buf, sizeof(buf), "%02lu:%02lu:%02lu",
-	         (unsigned long)h, (unsigned long)m, (unsigned long)s);
+	snprintf(buf, sizeof(buf), "%02lu:%02lu:%02lu",(unsigned long)h, (unsigned long)m, (unsigned long)s);
 	return buf;
 }
 
@@ -703,19 +748,20 @@ static void reportfunc(osjob_t *j) {
 
 	// encodage Cayenne LPP
 	cayenne_lpp_reset(&lpp);
-	cayenne_lpp_add_temperature(&lpp, 1, sensor_temp);        // canal 1 : 0.1 °C
-	cayenne_lpp_add_luminosity(&lpp, 2, sensor_lux);		  // canal 2 : lux
-	cayenne_lpp_add_digital_input(&lpp, 3, flame_cnt ? 1 : 0);			  // canal 3 : flame
-	cayenne_lpp_add_digital_input(&lpp, 4, m_sw);				  // canal 4 : etat porte
-	cayenne_lpp_add_presence(&lpp, 5, pir_state);			  // canal 5 : detecteur presence
-	cayenne_lpp_add_digital_output(&lpp, 6, relay1_state);        // canal 6 : etat relais 1
-	cayenne_lpp_add_digital_output(&lpp, 7, relay2_state);        // canal 7 : etat relais 2
+	cayenne_lpp_add_temperature(&lpp, 1, sensor_temp);         // canal 1 : 0.1 °C
+	cayenne_lpp_add_luminosity(&lpp, 2, sensor_lux);		   // canal 2 : lux
+	cayenne_lpp_add_digital_input(&lpp, 3, flame_cnt ? 1 : 0); // canal 3 : flame
+	cayenne_lpp_add_digital_input(&lpp, 4, m_sw);			   // canal 4 : etat porte
+	cayenne_lpp_add_presence(&lpp, 5, pir_state);			   // canal 5 : detecteur presence
+	cayenne_lpp_add_digital_output(&lpp, 6, relay1_mode);      // canal 6 : etat relais 1
+	cayenne_lpp_add_digital_output(&lpp, 7, relay2_mode);      // canal 7 : etat relais 2
+	cayenne_lpp_add_digital_output(&lpp, 7, error_cnt);        // canal erreur : nb erreur
 	// prepare and schedule data for transmission
-	LMIC_setTxData2(1, lpp.buffer, lpp.cursor, 0);            // port 1, 8 octets, unconfirmed
+	LMIC_setTxData2(1, lpp.buffer, lpp.cursor, 0);             // port 1, 8 octets, unconfirmed
 
 	lcd_manager(pagestate);
 	check_for_error();
-	relay_automation();
+	relay_mode_selector();
 	os_setTimedCallback(&reportjob, os_getTime() + sec2osticks(6), reportfunc); //6s callback du job
 
 	// reschedule job in 15 seconds
