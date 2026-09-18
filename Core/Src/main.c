@@ -89,7 +89,7 @@ typedef enum {
 #define ON 1
 #define OFF 0
 
-#define MAX_TEMP 45.0f
+#define MAX_TEMP_THR 45.0f
 #define FAN_THR_ON 30
 #define FAN_THR_OFF 28
 
@@ -99,7 +99,7 @@ typedef enum {
 
 #define LM35_MV_PER_DEG 10.0f
 
-#define SEUIL_LUMI 2000
+#define SEUIL_LUMI 3000
 
 /* USER CODE END PD */
 
@@ -483,7 +483,7 @@ void lcd_manager(uint8_t page) {
 		snprintf(lcd_text, sizeof(lcd_text), "     DATA 4  ");
 		draw_lcd(SCREEN_UP,NORMAL_BUF);
 		// BOTTOM
-		snprintf(lcd_text, sizeof(lcd_text), "PORTE : %s", m_sw ? "FERMER" : "OUVERTE");
+		snprintf(lcd_text, sizeof(lcd_text), "PORTE : %s", m_sw ? "FERMEE" : "OUVERTE");
 		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
 		break;
 	case PAGE_5 :
@@ -624,7 +624,7 @@ static void relay2_cmd(uint8_t cmd) {
 }
 
 static void check_for_error(void) {
-	if (sensor_temp > MAX_TEMP) {
+	if (sensor_temp > MAX_TEMP_THR) {
 		error_cnt ++;
 		alarm_start(LCD_COLOR_RED, FIVE_Hz, FIVE_Hz, "     TEMP HIGH");
 	}
@@ -705,6 +705,11 @@ static void reportfunc(osjob_t *j) {
 	cayenne_lpp_reset(&lpp);
 	cayenne_lpp_add_temperature(&lpp, 1, sensor_temp);        // canal 1 : 0.1 °C
 	cayenne_lpp_add_luminosity(&lpp, 2, sensor_lux);		  // canal 2 : lux
+	cayenne_lpp_add_digital_input(&lpp, 3, flame_cnt ? 1 : 0);			  // canal 3 : flame
+	cayenne_lpp_add_digital_input(&lpp, 4, m_sw);				  // canal 4 : etat porte
+	cayenne_lpp_add_presence(&lpp, 5, pir_state);			  // canal 5 : detecteur presence
+	cayenne_lpp_add_digital_output(&lpp, 6, relay1_state);        // canal 6 : etat relais 1
+	cayenne_lpp_add_digital_output(&lpp, 7, relay2_state);        // canal 7 : etat relais 2
 	// prepare and schedule data for transmission
 	LMIC_setTxData2(1, lpp.buffer, lpp.cursor, 0);            // port 1, 8 octets, unconfirmed
 
