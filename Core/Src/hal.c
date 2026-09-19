@@ -44,7 +44,7 @@
 #define mySPI hspi3     //  <--------- change to your setup
 
 #define BTN_DEBOUNCE_MS   30
-#define BTN_LONG_MS       3000
+#define BTN_LONG_MS       2500
 #define PIR_WARMUP_S  60
 
 static ostime_t press_t0    = 0;    /* date du dernier appui */

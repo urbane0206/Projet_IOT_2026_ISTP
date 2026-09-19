@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
+#include "dma.h"
 #include "i2c.h"
 #include "spi.h"
 #include "tim.h"
@@ -79,10 +80,24 @@ typedef enum {
 
 #define LIGHT_HOLD_TIME 30
 
-#define ONE_Hz 1000
-#define TWO_Hz 500
-#define FIVE_Hz 200
-#define TEN_Hz 100
+#define ONE_Hz    1000
+#define TWO_Hz    500
+#define THREE_Hz  333
+#define FOUR_Hz   250
+#define FIVE_Hz   200
+#define SIX_Hz    167
+#define SEVEN_Hz  143
+#define EIGHT_Hz  125
+#define NINE_Hz   111
+#define TEN_Hz    100
+#define FIFTEEN_Hz      67
+#define TWENTY_Hz       50
+#define TWENTY_FIVE_Hz  40
+#define THIRTY_Hz       33
+#define THIRTY_FIVE_Hz  29
+#define FORTY_Hz        25
+#define FORTY_FIVE_Hz   22
+#define FIFTY_Hz        20
 
 #define SCREEN_CURSOR_ZERO 0
 #define SCREEN_UP 0
@@ -139,6 +154,7 @@ osjob_t pir_off_job;
 
 volatile uint8_t eveil = 1;
 volatile uint32_t t_since_press = 0;
+volatile uint32_t sweep[256];
 volatile page_t pagestate = 0;
 
 static uint32_t blink_rgb;
@@ -176,7 +192,6 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static const char *timesinceboot(void);
 static void backlight_cmd(uint32_t rgb, uint8_t cmd);
-static void buzz_two_tone_cmd(uint8_t cmd);
 static void blinkfunc(osjob_t *j);
 static void uptimefunc(osjob_t *j);
 static void draw_lcd(uint8_t cursor_y, uint8_t buf_selector);
@@ -277,18 +292,29 @@ void RGBLCD1602_ECRAN_start_com(RGBLCD1602_t *lcd, u1_t datarate, u4_t freq)
 	DFRobot_RGBLCD1602_print(lcd, ligne);
 }
 
-void set_tone_frequency(TIM_HandleTypeDef *htim, uint32_t channel, uint32_t freq_hz) {
-    if (freq_hz == 0) {
-        __HAL_TIM_SET_COMPARE(htim, channel, 0); // Silence
+void set_tone_frequency(uint32_t freq1_hz, uint32_t freq2_hz) {
+    if (freq1_hz == 0 || freq2_hz == 0) {
+    	HAL_TIM_OC_Stop(&htim2, TIM_CHANNEL_1); // Silence
         return;
     }
+     uint32_t arr;
+     uint32_t sweep_size = freq2_hz - freq1_hz;
 
     // Calcul de la période : 1 000 000 / freq - 1
-    uint32_t arr = (1000000 / freq_hz) - 1;
+
+
+    for(uint32_t i = freq1_hz; i < freq2_hz; i++) {
+
+        arr = (1000000 / (2*i)) - 1;
+
+    	sweep[i-freq1_hz] = arr;
+    }
 
     // Mise à jour des registres
-    __HAL_TIM_SET_AUTORELOAD(htim, arr);
-    __HAL_TIM_SET_COMPARE(htim, channel, (arr + 1) / 2); // 50 % duty cycle
+	HAL_TIM_OC_Start(&htim2, TIM_CHANNEL_1);
+	HAL_TIM_Base_Start(&htim6); // 500hz
+	HAL_DMA_Start(htim6.hdma[TIM_DMA_ID_UPDATE], (uint32_t)sweep, (uint32_t)&TIM2->ARR, sweep_size);
+	__HAL_TIM_ENABLE_DMA(&htim6, TIM_DMA_UPDATE);
 }
 
 
@@ -310,7 +336,6 @@ void initsensor() {
 
 void buzzfunc(osjob_t *j) {
 	buzzstate = !buzzstate;
-	buzz_two_tone_cmd(buzzstate);
 	os_setTimedCallback(j, os_getTime() + ms2osticks(buzz_period), buzzfunc);
 }
 
@@ -343,14 +368,11 @@ void alarm_start(uint32_t rgb, uint32_t blink_period_ms, uint32_t buzz_period_ms
 }
 
 void buzz_start(uint32_t period_ms) {
-	buzz_period = period_ms;
-	buzzstate = 0;
-	buzzfunc(&buzzjob);
+	set_tone_frequency(480, 600);
 }
 
 void buzz_stop(void) {
-	os_clearCallback(&buzzjob);
-	set_tone_frequency(&htim2, TIM_CHANNEL_1, 0);
+	set_tone_frequency(0, 0);
 }
 
 void alarm_stop(void) {
@@ -436,15 +458,6 @@ static void backlight_cmd(uint32_t rgb, uint8_t cmd) {
 		RGBLCD1602_setColor(&Ecran_I2C, LCD_COLOR_OFF);
 	}
 }
-
-static void buzz_two_tone_cmd(uint8_t cmd) {
-	if (cmd) {
-		set_tone_frequency(&htim2, TIM_CHANNEL_1, 435);
-	} else {
-		set_tone_frequency(&htim2, TIM_CHANNEL_1, 651);
-	}
-}
-
 
 static void draw_lcd(uint8_t cursor_y, uint8_t buf_selector) {
     char line_buf[17]; // 16 caractères + '\0'
@@ -565,7 +578,10 @@ void lcd_manager(uint8_t page) {
 }
 
 void shortpressfunc(osjob_t *j) {   /* appui bouton court, appelé via os_setCallback */
-	alarm_stop();
+	if (error) {
+		pagestate = PAGE_ERROR;
+		alarm_stop();
+	}
 	change_page();
 	backlight_wake(LCD_COLOR_WHITE);
 	lcd_manager(pagestate);
@@ -648,17 +664,17 @@ static void relay2_cmd(uint8_t cmd) {
 static void check_for_error(void) {
 	if (sensor_temp > MAX_TEMP_THR) {
 		error_cnt ++;
-		alarm_start(LCD_COLOR_RED, FIVE_Hz, FIVE_Hz, "     TEMP HIGH");
+		alarm_start(LCD_COLOR_RED, FIVE_Hz, EIGHT_Hz, "     TEMP HIGH");
 	}
 
 	if (!m_sw && sensor_lux > SEUIL_LUMI) {
 		error_cnt ++;
-		alarm_start(LCD_COLOR_RED, FIVE_Hz, FIVE_Hz, "LUMIERE DETECTER");
+		alarm_start(LCD_COLOR_RED, FIVE_Hz, EIGHT_Hz, "LUMIERE DETECTER");
 	}
 
 	if (flame_cnt >= 1){
 		error_cnt ++;
-		alarm_start(LCD_COLOR_RED, FIVE_Hz, TEN_Hz, "    INCENDIE");
+		alarm_start(LCD_COLOR_RED, FIVE_Hz, EIGHT_Hz, "    INCENDIE");
 	}
 }
 
@@ -755,7 +771,7 @@ static void reportfunc(osjob_t *j) {
 	cayenne_lpp_add_presence(&lpp, 5, pir_state);			   // canal 5 : detecteur presence
 	cayenne_lpp_add_digital_output(&lpp, 6, relay1_mode);      // canal 6 : etat relais 1
 	cayenne_lpp_add_digital_output(&lpp, 7, relay2_mode);      // canal 7 : etat relais 2
-	cayenne_lpp_add_digital_output(&lpp, 7, error_cnt);        // canal erreur : nb erreur
+	cayenne_lpp_add_digital_output(&lpp, 8, error_cnt);        // canal erreur : nb erreur
 	// prepare and schedule data for transmission
 	LMIC_setTxData2(1, lpp.buffer, lpp.cursor, 0);             // port 1, 8 octets, unconfirmed
 
@@ -852,12 +868,14 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_SPI3_Init();
   MX_ADC1_Init();
   MX_TIM16_Init();
   MX_I2C1_Init();
   MX_USART2_UART_Init();
   MX_TIM2_Init();
+  MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
 	HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
 
@@ -865,7 +883,6 @@ int main(void)
 
 	HAL_TIM_Base_Start_IT(&htim16);   // <----------- change to your setup
 
-	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
 
 	__HAL_SPI_ENABLE(&hspi3);        // <----------- change to your setup
 
