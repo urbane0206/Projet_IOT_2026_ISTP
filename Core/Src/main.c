@@ -303,7 +303,7 @@ void set_tone_frequency(uint32_t freq1_hz, uint32_t freq2_hz) {
     // Calcul de la période : 1 000 000 / freq - 1
 
 
-    for(uint32_t i = freq1_hz; i < freq2_hz; i+=2) {
+    for(uint32_t i = freq1_hz; i < freq2_hz; i++) {
 
         arr = (1000000 / (2*i)) - 1;
 
@@ -368,7 +368,7 @@ void alarm_start(uint32_t rgb, uint32_t blink_period_ms, uint32_t buzz_period_ms
 }
 
 void buzz_start(uint32_t period_ms) {
-	set_tone_frequency(1200, 1800);
+	set_tone_frequency(1300, 1800);
 }
 
 void buzz_stop(void) {
