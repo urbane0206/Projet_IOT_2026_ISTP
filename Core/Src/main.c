@@ -313,7 +313,7 @@ void set_tone_frequency(uint32_t freq1_hz, uint32_t freq2_hz) {
     // Mise à jour des registres
 	HAL_TIM_OC_Start(&htim2, TIM_CHANNEL_1);
 	HAL_TIM_Base_Start(&htim6); // 500hz
-	HAL_DMA_Start(htim6.hdma[TIM_DMA_ID_UPDATE], (uint32_t)sweep, (uint32_t)&TIM2->ARR, sweep_size);
+	HAL_DMA_Start(hdma_tim6_up, (uint32_t)sweep, (uint32_t)&TIM2->ARR, sweep_size);
 	__HAL_TIM_ENABLE_DMA(&htim6, TIM_DMA_UPDATE);
 }
 
