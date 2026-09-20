@@ -170,7 +170,7 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* tim_baseHandle)
     /* TIM6_UP Init */
     hdma_tim6_up.Instance = DMA1_Channel3;
     hdma_tim6_up.Init.Request = DMA_REQUEST_6;
-    hdma_tim6_up.Init.Direction = DMA_PERIPH_TO_MEMORY;
+    hdma_tim6_up.Init.Direction = DMA_MEMORY_TO_PERIPH;
     hdma_tim6_up.Init.PeriphInc = DMA_PINC_DISABLE;
     hdma_tim6_up.Init.MemInc = DMA_MINC_ENABLE;
     hdma_tim6_up.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
