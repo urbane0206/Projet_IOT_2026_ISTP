@@ -114,13 +114,15 @@ typedef enum {
 #define FAN_THR_ON 30
 #define FAN_THR_OFF 28
 
-#define FLAME_TH_ON      2000
-#define FLAME_TH_OFF     1500
+#define FLAME_TH_ON      1400
+#define FLAME_TH_OFF     1000
 #define FLAME_CONFIRM_N  3
 
 #define LM35_MV_PER_DEG 10.0f
 
 #define SEUIL_LUMI 1000
+
+#define ADC_BUF_SIZE 300
 
 /* USER CODE END PD */
 
@@ -146,25 +148,23 @@ static osjob_t lightjob;
 static osjob_t reportjob;
 static osjob_t uptimejob;
 
+osjob_t initjob;
 osjob_t shortpressjob;
 osjob_t longpressjob;
-osjob_t buzzjob;
 osjob_t pir_on_job;
 osjob_t pir_off_job;
+osjob_t periodic_job;
 
 volatile uint8_t eveil = 1;
 volatile uint32_t t_since_press = 0;
 volatile uint32_t sweep[512];
+volatile uint16_t adc_buf[ADC_BUF_SIZE];
 volatile page_t pagestate = 0;
 
 static uint32_t blink_rgb;
 static uint32_t blink_ms;
-static uint32_t buzz_period;
 static uint8_t  ledstate = 0;
 static uint8_t  error = 0;
-static uint8_t  buzzstate = 0;
-static uint8_t flame_detected = 0;
-static uint8_t flame_cnt = 0;
 static uint8_t relay1_state = 0;
 static uint8_t relay2_state = 0;
 static rly_mode_t relay1_mode = 0;
@@ -175,9 +175,12 @@ char lcd_text[20];
 char lcd_error_text_up[20];
 char lcd_error_text_down[20];
 
-float sensor_temp = 0;
+volatile float sensor_temp = 0;
+volatile uint16_t sensor_lux = 0;
+volatile uint8_t flame_detected = 0;
+volatile uint8_t flame_cnt = 0;
+volatile u2_t flame_raw = 0;
 
-uint16_t sensor_lux = 0;
 uint16_t m_sw = 0;
 uint16_t pir_state = 0;
 uint16_t error_cnt = 0;
@@ -192,8 +195,6 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static const char *timesinceboot(void);
 static void backlight_cmd(uint32_t rgb, uint8_t cmd);
-static void blinkfunc(osjob_t *j);
-static void uptimefunc(osjob_t *j);
 static void draw_lcd(uint8_t cursor_y, uint8_t buf_selector);
 static void clear_error(void);
 static void change_page(void);
@@ -201,19 +202,64 @@ static void check_for_error(void);
 static void relay1_cmd(uint8_t cmd);
 static void relay2_cmd(uint8_t cmd);
 static void relay_mode_selector(void);
+static void flame_update(u2_t raw);
+static void blinkfunc(osjob_t *j);
+static void uptimefunc(osjob_t *j);
+static void periodic_func(osjob_t *j);
 
-void buzzfunc(osjob_t *j);
-void buzz_start(uint32_t period_ms);
+void buzz_start(void);
 void buzz_stop(void);
 void blink_start(uint32_t rgb, uint32_t period_ms);
 void blink_stop(void);
-void alarm_start(uint32_t rgb, uint32_t blink_period_ms, uint32_t buzz_period_ms, const char *alarm_msg);
+void alarm_start(uint32_t rgb, uint32_t blink_period_ms, const char *alarm_msg);
 void alarm_stop(void);
 void lcd_manager(uint8_t page);
+
+float LM35_GetTemperature(u2_t adc);
+
+uint16_t dfr0026_adc_to_lux(u2_t adc) ;
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
+
+	if (hadc == &hadc1) {
+
+		u2_t temp_val;
+		u2_t lux_val;
+		u2_t flame_val;
+		uint32_t holder = 0;
+		uint32_t l;
+
+		// Temperature
+		for(l = 0; l < 298; l += 3){
+			holder += adc_buf[l];
+		}
+		temp_val = holder/100;
+		sensor_temp = LM35_GetTemperature (temp_val);
+
+		// Luminosite
+		holder = 0;
+		for(l = 1; l < 299; l += 3){
+			holder += adc_buf[l];
+		}
+		lux_val = holder/100;
+		sensor_lux = dfr0026_adc_to_lux(lux_val);
+
+		// Flame
+		holder = 0;
+		for(l = 2; l < 300; l += 3){
+			holder += adc_buf[l];
+		}
+		flame_val = holder/100;
+		flame_raw = flame_val;
+		flame_update(flame_val);
+	}
+
+}
+
 float lm94021_adc_to_tempC(u2_t adc) {
     // 1) code ADC -> tension en mV
     float v = (float)adc * VREF_MV / ADC_MAX;
@@ -258,25 +304,6 @@ uint16_t dfr0026_adc_to_lux(u2_t adc) {
     return (uint16_t)(lux + 0.5f);
 }
 
-/* ---------- ADC : lecture d'un canal ---------- */
-static u2_t adc_read_channel(uint32_t channel) {
-	ADC_ChannelConfTypeDef sConfig = {0};
-	sConfig.Channel      = channel;
-	sConfig.Rank         = ADC_REGULAR_RANK_1;
-	sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
-	sConfig.SingleDiff   = ADC_SINGLE_ENDED;
-	sConfig.OffsetNumber = ADC_OFFSET_NONE;
-	sConfig.Offset       = 0;
-	HAL_ADC_ConfigChannel(&hadc1, &sConfig);
-
-	u2_t val = 0;
-	HAL_ADC_Start(&hadc1);
-	if (HAL_ADC_PollForConversion(&hadc1, 5) == HAL_OK)
-		val = (u2_t) HAL_ADC_GetValue(&hadc1);
-	HAL_ADC_Stop(&hadc1);
-	return val;
-}
-
 void RGBLCD1602_ECRAN_start_com(RGBLCD1602_t *lcd, u1_t datarate, u4_t freq)
 {
 	char ligne[20];
@@ -313,10 +340,9 @@ void set_tone_frequency(uint32_t freq1_hz, uint32_t freq2_hz) {
     // Mise à jour des registres
 	HAL_TIM_OC_Start(&htim2, TIM_CHANNEL_1);
 	HAL_TIM_Base_Start(&htim6); // 500hz
-	HAL_DMA_Start(hdma_tim6_up, (uint32_t)sweep, (uint32_t)&TIM2->ARR, sweep_size);
+	HAL_DMA_Start(htim6.hdma[TIM_DMA_ID_UPDATE], (uint32_t)sweep, (uint32_t)&TIM2->ARR, sweep_size);
 	__HAL_TIM_ENABLE_DMA(&htim6, TIM_DMA_UPDATE);
 }
-
 
 // provide application router ID (8 bytes, LSBF)
 void os_getArtEui(u1_t *buf) {
@@ -330,29 +356,18 @@ void os_getDevEui(u1_t *buf) {
 void os_getDevKey(u1_t *buf) {
 	memcpy(buf, DEVKEY, 16);
 }
-void initsensor() {
-
-}
-
-void buzzfunc(osjob_t *j) {
-	buzzstate = !buzzstate;
-	os_setTimedCallback(j, os_getTime() + ms2osticks(buzz_period), buzzfunc);
-}
 
 static void uptimefunc(osjob_t *j) {
-	if (pagestate == PAGE_9) {
-		lcd_manager(pagestate);   // réarme le job
-	}
+	lcd_manager(pagestate);
+	os_setTimedCallback(&uptimejob, os_getTime() + sec2osticks(1), uptimefunc);
 }
 
-void alarm_start(uint32_t rgb, uint32_t blink_period_ms, uint32_t buzz_period_ms, const char *alarm_msg) {
+void alarm_start(uint32_t rgb, uint32_t blink_period_ms, const char *alarm_msg) {
 	error = 1;
 
 	blink_rgb = rgb;
 	blink_ms  = blink_period_ms;
-	buzz_period = buzz_period_ms;
 	ledstate  = 0;
-	buzzstate = 0;
 
 	if (alarm_msg != NULL) {
 			strncpy(lcd_error_text_down, alarm_msg, sizeof(lcd_error_text_down) - 1);
@@ -364,11 +379,11 @@ void alarm_start(uint32_t rgb, uint32_t blink_period_ms, uint32_t buzz_period_ms
 
 	lcd_manager(PAGE_ERROR);
 	blink_start(rgb, blink_period_ms);
-	buzz_start(buzz_period_ms);
+	buzz_start();
 }
 
-void buzz_start(uint32_t period_ms) {
-	set_tone_frequency(1300, 1800);
+void buzz_start(void) {
+	set_tone_frequency(1800, 2100);
 }
 
 void buzz_stop(void) {
@@ -398,10 +413,7 @@ void blink_stop(void) {
 	os_clearCallback(&blinkjob);
 }
 
-
 void initfunc(osjob_t *j) {
-	// intialize sensor hardware
-	initsensor();
 	// reset MAC state
 	LMIC_reset();
 	// start joining
@@ -409,24 +421,23 @@ void initfunc(osjob_t *j) {
 
 	LMIC_setDrTxpow(DR_SF7, 20);
 }
-u2_t readsensor_temp() {
-	u2_t temp_val = adc_read_channel(ADC_CHANNEL_9);
-	return temp_val;
-}
-
-u2_t readsensor_lux() {
-	u2_t lux_val = adc_read_channel(ADC_CHANNEL_15);
-	return lux_val;
-}
-
-u2_t readsensor_flame() {
-	u2_t flame_val = adc_read_channel(ADC_CHANNEL_16);
-	return flame_val;
-}
 
 u1_t  readsensor_mag_sw() {
 	u1_t mag_sw_val = HAL_GPIO_ReadPin(MAG_SW_GPIO_Port, MAG_SW_Pin);
 	return mag_sw_val;
+}
+
+static void periodic_func(osjob_t *j){
+	check_for_error();
+	relay_mode_selector();
+
+	// read sensor magnetic sw
+	u1_t mag_sw_state = readsensor_mag_sw();
+	m_sw = mag_sw_state;
+
+
+
+	os_setTimedCallback(&periodic_job, os_getTime() + ms2osticks(500), periodic_func);
 }
 
 static void lightoff(osjob_t *j) {
@@ -505,7 +516,7 @@ void lcd_manager(uint8_t page) {
 		snprintf(lcd_text, sizeof(lcd_text), "     DATA 3  ");
 		draw_lcd(SCREEN_UP,NORMAL_BUF);
 		// BOTTOM
-		snprintf(lcd_text, sizeof(lcd_text), "FEUX : %s", flame_cnt >= 1 ? "DANGER" : "AUCUN");
+		snprintf(lcd_text, sizeof(lcd_text), "FEUX : %s", flame_detected ? "DANGER" : "AUCUN");
 		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
 		break;
 	case PAGE_4 :
@@ -555,7 +566,6 @@ void lcd_manager(uint8_t page) {
 		// BOTTOM
 		snprintf(lcd_text, sizeof(lcd_text), "UP-TIME %s", timesinceboot());
 		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
-		os_setTimedCallback(&uptimejob, os_getTime() + sec2osticks(1), uptimefunc);
 		break;
 	case PAGE_ERROR :
 		// TOP
@@ -572,6 +582,7 @@ void lcd_manager(uint8_t page) {
 		// BOTTOM
 		snprintf(lcd_text, sizeof(lcd_text), " ");
 		draw_lcd(SCREEN_DOWN,NORMAL_BUF);
+		os_setTimedCallback(&uptimejob, os_getTime() + sec2osticks(2), uptimefunc);
 		break;
 	}
 
@@ -636,9 +647,10 @@ void pir_off_func(osjob_t *j) {   /* declanchement off pir, appelé via os_setCa
 
 static void clear_error(void) {
 	error_cnt = 0;
-	flame_cnt = 0;
+	flame_detected = 0;
 	snprintf(lcd_error_text_down, sizeof(lcd_error_text_down), " ");
 	alarm_stop();
+	os_clearCallback(&uptimejob);
 	lcd_manager(PAGE_CLEARED);
 }
 
@@ -664,17 +676,17 @@ static void relay2_cmd(uint8_t cmd) {
 static void check_for_error(void) {
 	if (sensor_temp > MAX_TEMP_THR) {
 		error_cnt ++;
-		alarm_start(LCD_COLOR_RED, FIVE_Hz, EIGHT_Hz, "     TEMP HIGH");
+		if (!error) alarm_start(LCD_COLOR_RED, FIVE_Hz, "     TEMP HIGH");
 	}
 
 	if (!m_sw && sensor_lux > SEUIL_LUMI) {
 		error_cnt ++;
-		alarm_start(LCD_COLOR_RED, FIVE_Hz, EIGHT_Hz, "LUMIERE DETECTER");
+		if (!error) alarm_start(LCD_COLOR_RED, FIVE_Hz, "LUMIERE DETECTER");
 	}
 
-	if (flame_cnt >= 1){
+	if (flame_detected){
 		error_cnt ++;
-		alarm_start(LCD_COLOR_RED, FIVE_Hz, EIGHT_Hz, "    INCENDIE");
+		if (!error) alarm_start(LCD_COLOR_RED, FIVE_Hz, "    INCENDIE");
 	}
 }
 
@@ -735,29 +747,23 @@ static const char *timesinceboot(void) {
 // report sensor value every 5sec
 static void reportfunc(osjob_t *j) {
 	// read sensor temp
-	u2_t temp_val = readsensor_temp();
-	sensor_temp = LM35_GetTemperature (temp_val);	//lm94021_adc_to_tempC(temp_val);
 	debug_time();
 	debug_valfloat("Onboard sensor temp -> ", sensor_temp, 4);
 	debug_str(" °C\r\n");
 
 	// read sensor lux
-	u2_t lux_val = readsensor_lux();
-	sensor_lux = dfr0026_adc_to_lux(lux_val);
 	debug_time();
 	debug_valdec("Onboard sensor lux -> ", sensor_lux);
 	debug_str(" lux \r\n");
 
 	// read sensor flame
-	u2_t flame_val = readsensor_flame();
-	flame_update(flame_val);
 	debug_time();
-	debug_valdec("Onboard sensor flame -> ", flame_cnt);
+	debug_valdec("Onboard sensor flame raw -> ", flame_raw);
+	debug_str("\r\n");
+	debug_valdec("Onboard sensor flame -> ", flame_detected);
 	debug_str("\r\n");
 
 	// read sensor magnetic sw
-	u1_t mag_sw_state = readsensor_mag_sw();
-	m_sw = mag_sw_state;
 	debug_time();
 	debug_valdec("Onboard sensor mag sw -> ", m_sw);
 	debug_str("\r\n");
@@ -766,7 +772,7 @@ static void reportfunc(osjob_t *j) {
 	cayenne_lpp_reset(&lpp);
 	cayenne_lpp_add_temperature(&lpp, 1, sensor_temp);         // canal 1 : 0.1 °C
 	cayenne_lpp_add_luminosity(&lpp, 2, sensor_lux);		   // canal 2 : lux
-	cayenne_lpp_add_digital_input(&lpp, 3, flame_cnt ? 1 : 0); // canal 3 : flame
+	cayenne_lpp_add_digital_input(&lpp, 3, flame_detected ? 1 : 0); // canal 3 : flame
 	cayenne_lpp_add_digital_input(&lpp, 4, m_sw);			   // canal 4 : etat porte
 	cayenne_lpp_add_presence(&lpp, 5, pir_state);			   // canal 5 : detecteur presence
 	cayenne_lpp_add_digital_output(&lpp, 6, relay1_mode);      // canal 6 : etat relais 1
@@ -774,14 +780,6 @@ static void reportfunc(osjob_t *j) {
 	cayenne_lpp_add_digital_output(&lpp, 8, error_cnt);        // canal erreur : nb erreur
 	// prepare and schedule data for transmission
 	LMIC_setTxData2(1, lpp.buffer, lpp.cursor, 0);             // port 1, 8 octets, unconfirmed
-
-	lcd_manager(pagestate);
-	check_for_error();
-	relay_mode_selector();
-	os_setTimedCallback(&reportjob, os_getTime() + sec2osticks(6), reportfunc); //6s callback du job
-
-	// reschedule job in 15 seconds
-	//os_setTimedCallback(j, os_getTime() + sec2osticks(15), reportfunc);
 }
 
 //////////////////////////////////////////////////
@@ -802,6 +800,8 @@ void onEvent(ev_t ev) {
 		backlight_wake(LCD_COLOR_WHITE);
 		lcd_manager(pagestate);
 		reportfunc(&reportjob);
+		periodic_func(&periodic_job);
+		uptimefunc(&uptimejob);
 		break;
 	case EV_TXCOMPLETE:
 		if (LMIC.txrxFlags & TXRX_ACK)
@@ -814,6 +814,7 @@ void onEvent(ev_t ev) {
 		    debug_buf(LMIC.frame + LMIC.dataBeg, LMIC.dataLen);
 		    debug_char('\n');
 		}
+		os_setTimedCallback(&reportjob, os_getTime() + ms2osticks(1000), reportfunc);
 		break;
 	case EV_JOIN_FAILED:
 	case EV_SCAN_TIMEOUT:
@@ -876,30 +877,27 @@ int main(void)
   MX_USART2_UART_Init();
   MX_TIM2_Init();
   MX_TIM6_Init();
+  MX_TIM15_Init();
   /* USER CODE BEGIN 2 */
 	HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
 
-	//HAL_GPIO_WritePin(ALIM_TEMP_GPIO_Port, ALIM_TEMP_Pin, 1);
-
 	HAL_TIM_Base_Start_IT(&htim16);   // <----------- change to your setup
-
 
 	__HAL_SPI_ENABLE(&hspi3);        // <----------- change to your setup
 
-	osjob_t initjob;
+	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADC_BUF_SIZE);
+
+	HAL_TIM_Base_Start(&htim15);
 
 	// initialize runtime env
 	os_init();
 	// initialize debug library
 	debug_init();
-	// setup initial job
-	//os_setCallback(&hellojob, hellofunc);
 
 	RGBLCD1602_ECRAN_I2C_Init(&Ecran_I2C,&hi2c1,LCD_COLOR_OFF);
 
 	os_setCallback(&initjob, initfunc);
 	// execute scheduled jobs and events
-
 	os_runloop();
 	// (not reached)
 	return 0;
