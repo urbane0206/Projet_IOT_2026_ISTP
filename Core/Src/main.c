@@ -154,7 +154,7 @@ osjob_t pir_off_job;
 
 volatile uint8_t eveil = 1;
 volatile uint32_t t_since_press = 0;
-volatile uint32_t sweep[256];
+volatile uint32_t sweep[512];
 volatile page_t pagestate = 0;
 
 static uint32_t blink_rgb;
@@ -303,7 +303,7 @@ void set_tone_frequency(uint32_t freq1_hz, uint32_t freq2_hz) {
     // Calcul de la période : 1 000 000 / freq - 1
 
 
-    for(uint32_t i = freq1_hz; i < freq2_hz; i++) {
+    for(uint32_t i = freq1_hz; i < freq2_hz; i+=2) {
 
         arr = (1000000 / (2*i)) - 1;
 
@@ -368,7 +368,7 @@ void alarm_start(uint32_t rgb, uint32_t blink_period_ms, uint32_t buzz_period_ms
 }
 
 void buzz_start(uint32_t period_ms) {
-	set_tone_frequency(480, 600);
+	set_tone_frequency(1200, 1800);
 }
 
 void buzz_stop(void) {
