@@ -99,6 +99,10 @@ typedef enum {
 #define FORTY_FIVE_Hz   22
 #define FIFTY_Hz        20
 
+#define BIP_HZ      2500
+#define BIP_ON_MS   40
+#define BIP_OFF_MS  50
+
 #define SCREEN_CURSOR_ZERO 0
 #define SCREEN_UP 0
 #define SCREEN_DOWN 1
@@ -147,6 +151,8 @@ static osjob_t backlightjob;
 static osjob_t lightjob;
 static osjob_t reportjob;
 static osjob_t uptimejob;
+static osjob_t bipjob;
+
 
 osjob_t initjob;
 osjob_t shortpressjob;
@@ -161,6 +167,7 @@ volatile uint32_t sweep[512];
 volatile uint16_t adc_buf[ADC_BUF_SIZE];
 volatile page_t pagestate = 0;
 
+static uint8_t bip_step;
 static uint32_t blink_rgb;
 static uint32_t blink_ms;
 static uint8_t  ledstate = 0;
@@ -347,6 +354,26 @@ void set_tone_frequency(uint32_t freq1_hz, uint32_t freq2_hz) {
 	__HAL_TIM_ENABLE_DMA(&htim6, TIM_DMA_UPDATE);
 }
 
+static void tone_fixed(uint32_t hz) {
+	if (hz == 0) { HAL_TIM_OC_Stop(&htim2, TIM_CHANNEL_1); return; }
+	__HAL_TIM_SET_AUTORELOAD(&htim2, 1000000UL / (2 * hz) - 1);
+	__HAL_TIM_SET_COUNTER(&htim2, 0);
+	HAL_TIM_OC_Start(&htim2, TIM_CHANNEL_1);
+}
+
+static void bipfunc(osjob_t *j) {
+	uint8_t on = !(bip_step & 1);
+	tone_fixed(on ? BIP_HZ : 0);
+	if (++bip_step < 4)
+		os_setTimedCallback(&bipjob, os_getTime() + ms2osticks(on ? BIP_ON_MS : BIP_OFF_MS), bipfunc);
+}
+
+void bip_bip(void) {
+	buzz_stop();
+	bip_step = 0;
+	bipfunc(&bipjob);
+}
+
 // provide application router ID (8 bytes, LSBF)
 void os_getArtEui(u1_t *buf) {
 	memcpy(buf, APPEUI, 8);
@@ -390,6 +417,10 @@ void buzz_start(void) {
 }
 
 void buzz_stop(void) {
+	__HAL_TIM_DISABLE_DMA(&htim6, TIM_DMA_UPDATE);
+	HAL_DMA_Abort(htim6.hdma[TIM_DMA_ID_UPDATE]);
+	HAL_TIM_Base_Stop(&htim6);
+	HAL_TIM_OC_Stop(&htim2, TIM_CHANNEL_1);
 	set_tone_frequency(0, 0);
 }
 
@@ -656,6 +687,7 @@ static void clear_error(void) {
 	flame_detected = 0;
 	snprintf(lcd_error_text_down, sizeof(lcd_error_text_down), " ");
 	alarm_stop();
+	bip_bip();
 	os_clearCallback(&uptimejob);
 	lcd_manager(PAGE_CLEARED);
 }
