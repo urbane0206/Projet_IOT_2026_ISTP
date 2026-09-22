@@ -761,7 +761,7 @@ static void relay1_automation(void){
 
 static void relay2_automation(void){
 	//declanchement lumiere
-	if (pir_state && sensor_lux < SEUIL_LUMI) { //allume que si lumiere dans le local insuffisant.
+	if (pir_state && sensor_lux < SEUIL_LUMI && !m_sw) { //allume que si lumiere dans le local insuffisant.
 		light_wake();
 	}
 }
