@@ -184,6 +184,9 @@ volatile u2_t flame_raw = 0;
 uint16_t m_sw = 0;
 uint16_t pir_state = 0;
 uint16_t error_cnt = 0;
+uint16_t temp_high_error = 0;
+uint16_t effraction_error = 0;
+uint16_t incendie_error = 0;
 
 RGBLCD1602_t Ecran_I2C; //creation de l'objet
 
@@ -646,6 +649,9 @@ void pir_off_func(osjob_t *j) {   /* declanchement off pir, appelé via os_setCa
 }
 
 static void clear_error(void) {
+	incendie_error = 0;
+	effraction_error = 0;
+	temp_high_error = 0;
 	error_cnt = 0;
 	flame_detected = 0;
 	snprintf(lcd_error_text_down, sizeof(lcd_error_text_down), " ");
@@ -675,16 +681,19 @@ static void relay2_cmd(uint8_t cmd) {
 
 static void check_for_error(void) {
 	if (sensor_temp > MAX_TEMP_THR) {
+		temp_high_error = 1;
 		error_cnt ++;
 		if (!error) alarm_start(LCD_COLOR_RED, FIVE_Hz, "     TEMP HIGH");
 	}
 
-	if (!m_sw && sensor_lux > SEUIL_LUMI) {
+	if (m_sw && sensor_lux > SEUIL_LUMI) {
+		effraction_error = 1;
 		error_cnt ++;
-		if (!error) alarm_start(LCD_COLOR_RED, FIVE_Hz, "LUMIERE DETECTER");
+		if (!error) alarm_start(LCD_COLOR_RED, FIVE_Hz, "EFFRACTION DETEC");
 	}
 
 	if (flame_detected){
+		incendie_error = 1;
 		error_cnt ++;
 		if (!error) alarm_start(LCD_COLOR_RED, FIVE_Hz, "    INCENDIE");
 	}
@@ -703,7 +712,7 @@ static void relay1_automation(void){
 
 static void relay2_automation(void){
 	//declanchement lumiere
-	if (pir_state) {
+	if (pir_state && sensor_lux < SEUIL_LUMI) { //allume que si lumiere dans le local insuffisant.
 		light_wake();
 	}
 }
@@ -778,6 +787,9 @@ static void reportfunc(osjob_t *j) {
 	cayenne_lpp_add_digital_output(&lpp, 6, relay1_mode);      // canal 6 : etat relais 1
 	cayenne_lpp_add_digital_output(&lpp, 7, relay2_mode);      // canal 7 : etat relais 2
 	cayenne_lpp_add_digital_output(&lpp, 8, error_cnt);        // canal erreur : nb erreur
+	cayenne_lpp_add_digital_output(&lpp, 9, incendie_error);   // canal erreur : incendie
+	cayenne_lpp_add_digital_output(&lpp, 10, effraction_error);// canal erreur : effraction
+	cayenne_lpp_add_digital_output(&lpp, 11, temp_high_error); // canal erreur : over temp of the local technique
 	// prepare and schedule data for transmission
 	LMIC_setTxData2(1, lpp.buffer, lpp.cursor, 0);             // port 1, 8 octets, unconfirmed
 }
