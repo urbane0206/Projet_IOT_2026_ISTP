@@ -686,7 +686,7 @@ static void check_for_error(void) {
 		if (!error) alarm_start(LCD_COLOR_RED, FIVE_Hz, "     TEMP HIGH");
 	}
 
-	if (m_sw && sensor_lux > SEUIL_LUMI) {
+	if (m_sw && !relay2_state && sensor_lux > SEUIL_LUMI) {
 		effraction_error = 1;
 		error_cnt ++;
 		if (!error) alarm_start(LCD_COLOR_RED, FIVE_Hz, "EFFRACTION DETEC");
