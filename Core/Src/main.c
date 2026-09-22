@@ -769,6 +769,7 @@ static void reportfunc(osjob_t *j) {
 	debug_time();
 	debug_valdec("Onboard sensor flame raw -> ", flame_raw);
 	debug_str("\r\n");
+	debug_time();
 	debug_valdec("Onboard sensor flame -> ", flame_detected);
 	debug_str("\r\n");
 
