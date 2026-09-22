@@ -151,6 +151,7 @@ static osjob_t backlightjob;
 static osjob_t lightjob;
 static osjob_t reportjob;
 static osjob_t uptimejob;
+static osjob_t twobipjob;
 static osjob_t bipjob;
 
 
@@ -361,14 +362,27 @@ static void tone_fixed(uint32_t hz) {
 	HAL_TIM_OC_Start(&htim2, TIM_CHANNEL_1);
 }
 
-static void bipfunc(osjob_t *j) {
+static void twobipfunc(osjob_t *j) {
 	uint8_t on = !(bip_step & 1);
 	tone_fixed(on ? BIP_HZ : 0);
 	if (++bip_step < 4)
-		os_setTimedCallback(&bipjob, os_getTime() + ms2osticks(on ? BIP_ON_MS : BIP_OFF_MS), bipfunc);
+		os_setTimedCallback(&twobipjob, os_getTime() + ms2osticks(on ? BIP_ON_MS : BIP_OFF_MS), twobipfunc);
 }
 
 void bip_bip(void) {
+	buzz_stop();
+	bip_step = 0;
+	twobipfunc(&bipjob);
+}
+
+static void bipfunc(osjob_t *j) {
+	uint8_t on = !(bip_step & 1);
+	tone_fixed(on ? BIP_HZ : 0);
+	if (++bip_step < 2)
+		os_setTimedCallback(&bipjob, os_getTime() + ms2osticks(on ? BIP_ON_MS : BIP_OFF_MS), bipfunc);
+}
+
+void bip(void) {
 	buzz_stop();
 	bip_step = 0;
 	bipfunc(&bipjob);
@@ -632,6 +646,7 @@ void shortpressfunc(osjob_t *j) {   /* appui bouton court, appelé via os_setCal
 	lcd_manager(pagestate);
 	debug_time();
 	debug_str("Change page cmd\r\n");
+	bip();
 }
 
 void longpressfunc(osjob_t *j) {   /* appui bouton long, appelé via os_setCallback seulement */
