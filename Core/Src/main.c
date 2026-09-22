@@ -647,11 +647,13 @@ void longpressfunc(osjob_t *j) {   /* appui bouton long, appelé via os_setCallb
 		relay1_mode = (rly_mode_t)((relay1_mode + 1) % 3);
 		relay_mode_selector();
 		lcd_manager(pagestate);
+		bip_bip();
 		break;
 	case PAGE_7 :
 		relay2_mode = (rly_mode_t)((relay2_mode + 1) % 3);
 		relay_mode_selector();
 		lcd_manager(pagestate);
+		bip_bip();
 		break;
 	case PAGE_8 : break;
 	case PAGE_9 : break;
